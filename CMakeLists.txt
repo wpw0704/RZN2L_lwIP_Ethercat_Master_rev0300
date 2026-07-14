@@ -142,6 +142,7 @@ set(INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/common/renesas/module/ethercat/soem/osal"
     "${CMAKE_CURRENT_SOURCE_DIR}/common/renesas/module/ethercat/soem/oshw"
     "${CMAKE_CURRENT_SOURCE_DIR}/common/renesas/module/ethercat/soem/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/common/renesas/module/gpt"
 )
 
 set(SOURCE_DIRS
@@ -157,6 +158,7 @@ set(SOURCE_DIRS
     "${E2STUDIO_DIR}/rzn/fsp/src/r_ether_selector"
     "${E2STUDIO_DIR}/rzn/fsp/src/r_ethsw"
     "${E2STUDIO_DIR}/rzn/fsp/src/r_gmac"
+    "${E2STUDIO_DIR}/rzn/fsp/src/r_gpt"
     "${E2STUDIO_DIR}/rzn/fsp/src/r_ioport"
     "${E2STUDIO_DIR}/rzn/fsp/src/r_sci_uart"
     "${E2STUDIO_DIR}/rzn/fsp/src/rm_freertos_port/cr"
@@ -183,7 +185,9 @@ set(SOURCE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/common/renesas/module/ethercat/soem/oshw"
 )
 
-set(PROJECT_SOURCES)
+set(PROJECT_SOURCES
+        common/renesas/module/gpt/gpt.c
+        common/renesas/module/gpt/gpt.h)
 foreach(SOURCE_DIR IN LISTS SOURCE_DIRS)
     file(GLOB DIR_SOURCES CONFIGURE_DEPENDS "${SOURCE_DIR}/*.c")
     list(APPEND PROJECT_SOURCES ${DIR_SOURCES})

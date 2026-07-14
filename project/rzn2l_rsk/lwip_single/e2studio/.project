@@ -109,6 +109,16 @@
 			<locationURI>virtual:/virtual</locationURI>
 		</link>
 		<link>
+			<name>src/renesas/module/ethercat</name>
+			<type>2</type>
+			<locationURI>virtual:/virtual</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/gpt</name>
+			<type>2</type>
+			<locationURI>virtual:/virtual</locationURI>
+		</link>
+		<link>
 			<name>src/renesas/module/lwip_port</name>
 			<type>2</type>
 			<locationURI>virtual:/virtual</locationURI>
@@ -207,6 +217,26 @@
 			<name>src/renesas/module/ether_netif/um_ether_netif_task_writer.c</name>
 			<type>1</type>
 			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ether_netif/um_ether_netif_task_writer.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/app</name>
+			<type>2</type>
+			<locationURI>virtual:/virtual</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem</name>
+			<type>2</type>
+			<locationURI>virtual:/virtual</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/gpt/gpt.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/gpt/gpt.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/gpt/gpt.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/gpt/gpt.h</locationURI>
 		</link>
 		<link>
 			<name>src/renesas/module/lwip_port/lwip_osal</name>
@@ -517,6 +547,56 @@
 			<name>src/oss/lwip/src/netif/zepif.c</name>
 			<type>1</type>
 			<locationURI>PARENT-4-PROJECT_LOC/common/oss/lwip/src/netif/zepif.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/app/ethercat_app_common.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/app/ethercat_app_common.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/app/ethercat_app_common.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/app/ethercat_app_common.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/app/ethercat_master.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/app/ethercat_master.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/app/ethercat_master.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/app/ethercat_master.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/app/ethercat_port_cfg.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/app/ethercat_port_cfg.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/app/ethercat_port_monitor.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/app/ethercat_port_monitor.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/app/ethercat_port_monitor.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/app/ethercat_port_monitor.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/osal</name>
+			<type>2</type>
+			<locationURI>virtual:/virtual</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/oshw</name>
+			<type>2</type>
+			<locationURI>virtual:/virtual</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src</name>
+			<type>2</type>
+			<locationURI>virtual:/virtual</locationURI>
 		</link>
 		<link>
 			<name>src/renesas/module/lwip_port/lwip_osal/include</name>
@@ -1117,6 +1197,146 @@
 			<name>src/oss/lwip/src/netif/ppp/vj.c</name>
 			<type>1</type>
 			<locationURI>PARENT-4-PROJECT_LOC/common/oss/lwip/src/netif/ppp/vj.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/osal/osal.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/osal/osal.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/osal/osal.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/osal/osal.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/osal/osal_defs.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/osal/osal_defs.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/oshw/nicdrv.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/oshw/nicdrv.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/oshw/nicdrv.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/oshw/nicdrv.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/oshw/oshw.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/oshw/oshw.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/oshw/oshw.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/oshw/oshw.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercat.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercat.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatbase.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatbase.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatbase.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatbase.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatcoe.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatcoe.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatcoe.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatcoe.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatconfig.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatconfig.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatconfig.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatconfig.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatconfiglist.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatconfiglist.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatdc.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatdc.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatdc.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatdc.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercateoe.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercateoe.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercateoe.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercateoe.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatfoe.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatfoe.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatfoe.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatfoe.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatmain.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatmain.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatmain.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatmain.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatprint.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatprint.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatprint.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatprint.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatsoe.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatsoe.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercatsoe.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercatsoe.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/soem/src/ethercattype.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/soem/src/ethercattype.h</locationURI>
 		</link>
 		<link>
 			<name>src/renesas/module/lwip_port/lwip_osal/include/arch</name>

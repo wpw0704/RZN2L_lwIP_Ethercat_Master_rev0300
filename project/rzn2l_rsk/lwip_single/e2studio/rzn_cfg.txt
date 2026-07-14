@@ -1094,6 +1094,12 @@ FSP Configuration
     Parameter Checking: Default (BSP)
     Ethernet Mode: Ethernet Switch + Ethernet Switch + Ethernet Switch
     
+  Module "Timer, General PWM (r_gpt)"
+    Parameter Checking: Default (BSP)
+    Pin Output Support: Disabled
+    Write Protect Enable: Disabled
+    Multiplex Interrupt: Disabled
+    
   FreeRTOS
     General: Custom FreeRTOSConfig.h: 
     General: Use Preemption: Enabled
@@ -1219,6 +1225,99 @@ FSP Configuration
       
     Instance "Memory config check"
     Instance "FreeRTOS Port (rm_freertos_port)"
+    Instance "g_timer0 Timer, General PWM (r_gpt)"
+      General: Name: g_timer0
+      General: Unit: 0
+      General: Channel: 0
+      General: Mode: Periodic
+      General: Period: 4
+      General: Compare Match: Compare Match A: Status: Disabled
+      General: Compare Match: Compare Match A: Compare match value: 0
+      General: Compare Match: Compare Match B: Status: Disabled
+      General: Compare Match: Compare Match B: Compare match value: 0
+      General: Period Unit: Milliseconds
+      Output: Custom Waveform: GTIOA: Initial Output Level: Pin Level Low
+      Output: Custom Waveform: GTIOA: Cycle End Output Level: Pin Level Retain
+      Output: Custom Waveform: GTIOA: Compare Match Output Level: Pin Level Retain
+      Output: Custom Waveform: GTIOA: Retain Output Level at Count Stop: Disabled
+      Output: Custom Waveform: GTIOB: Initial Output Level: Pin Level Low
+      Output: Custom Waveform: GTIOB: Cycle End Output Level: Pin Level Retain
+      Output: Custom Waveform: GTIOB: Compare Match Output Level: Pin Level Retain
+      Output: Custom Waveform: GTIOB: Retain Output Level at Count Stop: Disabled
+      Output: Custom Waveform: Custom Waveform Enable: Disabled
+      Output: Duty Cycle Percent (only applicable in PWM mode): 50
+      Output: GTIOCA Output Enabled: False
+      Output: GTIOCA Stop Level: Pin Level Low
+      Output: GTIOCB Output Enabled: False
+      Output: GTIOCB Stop Level: Pin Level Low
+      Input: Count Up Source: 
+      Input: Count Down Source: 
+      Input: Phase Count Setting Automatically Enable: Disabled
+      Input: Counting Mode: Mode1
+      Input: Start Source: 
+      Input: Stop Source: 
+      Input: Clear Source: 
+      Input: Capture A Source: 
+      Input: Capture B Source: 
+      Input: Noise Filter A Sampling Clock Select: No Filter
+      Input: Noise Filter B Sampling Clock Select: No Filter
+      Interrupts: Callback: gpt0_callback
+      Interrupts: Overflow/Crest Interrupt Priority: Priority 12
+      Interrupts: Capture/Compare match A Interrupt Priority: Disabled
+      Interrupts: Capture/Compare match B Interrupt Priority: Disabled
+      Interrupts: Underflow/Trough Interrupt Priority: Disabled
+      Interrupts (GPT_SEL): Callback: NULL
+      Interrupts (GPT_SEL): Overflow/Crest Interrupt Source: 
+      Interrupts (GPT_SEL): Capture/Compare match A Interrupt Source: 
+      Interrupts (GPT_SEL): Capture/Compare match B Interrupt Source: 
+      Interrupts (GPT_SEL): Underflow/Trough Interrupt Source: 
+      Interrupts (GPT_SEL): Dead Time Error Interrupt Source: 
+      Interrupts (GPT_SEL): INT0 Interrupt Priority: Disabled
+      Interrupts (GPT_SEL): INT1 Interrupt Priority: Disabled
+      Interrupts (GPT_SEL): INT2 Interrupt Priority: Disabled
+      Interrupts (GPT_SEL): INT3 Interrupt Priority: Disabled
+      Interrupts (GPT_SEL): INT4 Interrupt Priority: Disabled
+      Extra Features: Extra Features: Disabled
+      Extra Features: Output Disable: POEG Link: POEG Channel 0
+      Extra Features: Output Disable: Output Disable POEG Trigger: 
+      Extra Features: ADC Trigger: Start Event Trigger: 
+      Extra Features: Dead Time: Dead Time Count Up (Raw Counts): 0
+      Extra Features: Dead Time: Dead Time Count Down (Raw Counts): 0
+      Extra Features: ADC Trigger: ADC A Compare Match (Raw Counts): 0
+      Extra Features: ADC Trigger: ADC B Compare Match (Raw Counts): 0
+      Extra Features: Interrupt Skipping: Interrupt to Count: None
+      Extra Features: Interrupt Skipping: Interrupt Skip Count: 0
+      Extra Features: Interrupt Skipping: Skip ADC Events: None
+      Extra Features: Output Disable: GTIOCA Disable Setting: Disable Prohibited
+      Extra Features: Output Disable: GTIOCB Disable Setting: Disable Prohibited
+      Extra Features: Extended Interrupt Skipping 1: Interrupt to Count: None
+      Extra Features: Extended Interrupt Skipping 1: Interrupt Skip Count: 0
+      Extra Features: Extended Interrupt Skipping 2: Interrupt to Count: None
+      Extra Features: Extended Interrupt Skipping 2: Interrupt Skip Count: 0
+      Extra Features: Input Capture Interrupt Extended Skipping Function: Overflow Interrupt: None
+      Extra Features: Input Capture Interrupt Extended Skipping Function: Underflow Interrupt: None
+      Extra Features: Input Capture Interrupt Extended Skipping Function: GTADTRA A/D Converter Start Request: None
+      Extra Features: Input Capture Interrupt Extended Skipping Function: GTADTRB A/D Converter Start Request: None
+      Interrupts: Dead Time Error Interrupt Priority: Disabled
+      Extra Features: Input Capture at Count Stop: Enabled
+      Extra Features: Input Capture Signal: Not Supported
+      ELC: LLPP GPT event A: Trigger Source: Disabled
+      ELC: LLPP GPT event B: Trigger Source: Disabled
+      ELC: LLPP GPT event C: Trigger Source: Disabled
+      ELC: LLPP GPT event D: Trigger Source: Disabled
+      ELC: LLPP GPT event E: Trigger Source: Disabled
+      ELC: LLPP GPT event F: Trigger Source: Disabled
+      ELC: LLPP GPT event G: Trigger Source: Disabled
+      ELC: LLPP GPT event H: Trigger Source: Disabled
+      ELC: NONSAFTY GPT event A: Trigger Source: Disabled
+      ELC: NONSAFTY GPT event B: Trigger Source: Disabled
+      ELC: NONSAFTY GPT event C: Trigger Source: Disabled
+      ELC: NONSAFTY GPT event D: Trigger Source: Disabled
+      ELC: NONSAFTY GPT event E: Trigger Source: Disabled
+      ELC: NONSAFTY GPT event F: Trigger Source: Disabled
+      ELC: NONSAFTY GPT event G: Trigger Source: Disabled
+      ELC: NONSAFTY GPT event H: Trigger Source: Disabled
+      
   Thread "Main Thread"
     Symbol: main_thread
     Name: Main Thread

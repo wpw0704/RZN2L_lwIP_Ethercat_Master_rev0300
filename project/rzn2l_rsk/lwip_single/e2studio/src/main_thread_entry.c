@@ -2,7 +2,7 @@
 #include "um_common.h"
 #include "um_serial_io_api.h"
 #include "ethercat_port_monitor.h"
-
+#include "gpt.h"
 
 /* Main Thread entry function */
 /* pvParameters contains TaskHandle_t */

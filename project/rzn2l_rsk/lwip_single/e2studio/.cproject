@@ -128,11 +128,10 @@
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../../../common/oss/lwip/src/include&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../../../common/renesas\module\lwip_port\lwip_osal\include&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../../../common/renesas/module/ethercat/app&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../../../common/renesas/module/ethercat/port&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../../../common/renesas/module/ethercat/soem/osal&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../../../common/renesas/module/ethercat/soem/oshw&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../../../common/renesas/module/ethercat/soem/src&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../../../common/renesas/module/ethercat/soem/include&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../../../../common/renesas/module/gpt&quot;"/>
 								</option>
 								<inputType id="ilg.gnuarmeclipse.managedbuild.cross.tool.c.compiler.input.948431309" superClass="ilg.gnuarmeclipse.managedbuild.cross.tool.c.compiler.input"/>
 							</tool>
