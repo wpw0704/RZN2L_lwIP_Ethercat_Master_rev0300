@@ -1,0 +1,56 @@
+# Build directories
+cmake-build-*/
+build/
+out/
+
+# e2 studio / Eclipse build output
+**/Debug/
+**/Release/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+Makefile
+build.ninja
+.ninja_deps
+.ninja_log
+
+# Compiler and linker outputs
+*.o
+*.obj
+*.d
+*.su
+*.a
+*.lib
+*.elf
+*.map
+*.hex
+*.bin
+*.srec
+*.lst
+
+# Logs and debug probe output
+*.log
+JLinkLog*.log
+
+# Local IDE/editor state
+.idea/
+.vscode/
+*.code-workspace
+*.user
+*.suo
+*.swp
+*.tmp
+*.bak
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local assistant/tooling state
+.agents/
+.codex/

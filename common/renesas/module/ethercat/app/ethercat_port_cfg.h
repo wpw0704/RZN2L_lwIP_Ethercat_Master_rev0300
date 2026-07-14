@@ -1,0 +1,10 @@
+#ifndef ETHERCAT_PORT_CFG_H
+#define ETHERCAT_PORT_CFG_H
+
+#include "um_ether_netif_api.h"
+
+#define ETHERCAT_MASTER_PORT_NUMBER (1U)
+#define ETHERCAT_MASTER_PORT_MASK   ETHER_NETIF_CFG_PORT_BIT(ETHERCAT_MASTER_PORT_NUMBER)
+#define ETHERCAT_MASTER_IFNAME      "port1"
+
+#endif
