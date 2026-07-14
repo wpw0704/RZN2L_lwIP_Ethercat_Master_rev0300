@@ -754,8 +754,6 @@ static void ethercat_master_scan_task(void *pvParameters) {
 
         (void) ec_send_processdata();
         wkc = ec_receive_processdata(EC_TIMEOUTRET);
-        wkc = ec_receive_processdata(
-            EC_TIMEOUTRET);
 
         s_ecat_last_wkc = wkc;
         if (wkc >= expected_wkc) {
