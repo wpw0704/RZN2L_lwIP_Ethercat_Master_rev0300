@@ -374,7 +374,6 @@ static void ethercat_safe_op_cycle_forever(
     s_ecat_last_wkc = 0;
     s_ecat_stable_done = 0U;
     s_ecat_stable_pass = 0U;
-
     /*
      * 清除该任务之前可能残留的通知。
      */
@@ -398,7 +397,6 @@ static void ethercat_safe_op_cycle_forever(
      * 避免OP切换后产生额外空闲间隔。
      */
     (void) ec_send_processdata();
-
     wkc = ec_receive_processdata(
         EC_TIMEOUTRET);
 
@@ -753,7 +751,8 @@ static void ethercat_master_scan_task(void *pvParameters) {
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(4));
 
         (void) ec_send_processdata();
-        wkc = ec_receive_processdata(EC_TIMEOUTRET);
+        wkc = ec_receive_processdata(
+            EC_TIMEOUTRET);
 
         s_ecat_last_wkc = wkc;
         if (wkc >= expected_wkc) {
