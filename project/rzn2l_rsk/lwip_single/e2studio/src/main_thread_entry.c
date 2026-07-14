@@ -2,7 +2,6 @@
 #include "um_common.h"
 #include "um_serial_io_api.h"
 #include "ethercat_port_monitor.h"
-#include "gpt.h"
 
 /* Main Thread entry function */
 /* pvParameters contains TaskHandle_t */
@@ -18,6 +17,7 @@ void main_thread_entry(void *pvParameters) {
         }
     }
     USR_LOG_INFO("Started Serial I/O interface.");
+
 
     /* 当前阶段不运行发包验证函数，只启动 port1 链路稳定监控，为后续 SOEM 扫描从站做准备。 */
     usr_err = ethercat_port_monitor_start();
