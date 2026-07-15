@@ -40,37 +40,6 @@
 #define ETHERCAT_DC_WARMUP_MS           (1000U)
 #define ETHERCAT_OP_TIMEOUT_MS          (5000U)
 
-/* CiA402 控制字常用定义 */
-#define CIA402_CTRL_SHUTDOWN        0x0006U  /* Shutdown: Fault Reset + 切换为 Ready */
-#define CIA402_CTRL_SWITCH_ON       0x0007U  /* Switch On: 激磁但不使能输出 */
-#define CIA402_CTRL_ENABLE_OP       0x000FU  /* Enable Operation: 允许运动 */
-#define CIA402_CTRL_QUICK_STOP      0x000BU  /* Quick Stop: 快速停止 */
-#define CIA402_CTRL_FAULT_RESET     0x0080U  /* Fault Reset: 清除驱动器故障 */
-
-/* CiA402 StatusWord 掩码与期望值 */
-#define CIA402_SW_MASK_FAULT        0x004FU
-#define CIA402_SW_VAL_SWITCH_ON_DIS 0x0040U  /* Switch On Disabled (Fault 清除后) */
-#define CIA402_SW_MASK_RDY          0x006FU
-#define CIA402_SW_VAL_READY         0x0021U  /* Ready to Switch On */
-#define CIA402_SW_VAL_SWITCHED_ON   0x0023U  /* Switched On */
-#define CIA402_SW_VAL_OP_ENABLED    0x0027U  /* Operation Enabled */
-#define CIA402_SW_BIT_FAULT         0x0008U  /* Bit3: Fault active */
-
-/* CiA402 非阻塞状态机 — 每个 PDO 周期自动推进 */
-typedef enum {
-    CIA402_SEQ_IDLE = 0, /* 不进行状态切换 */
-    CIA402_SEQ_FAULT_RESET_LO, /* 上升沿前奏: 确保 bit7=0 */
-    CIA402_SEQ_FAULT_RESET_HI, /* 上升沿: 发 0x0080 等 Fault 清除 */
-    CIA402_SEQ_SHUTDOWN, /* 发 0x0006 等 Ready to Switch On */
-    CIA402_SEQ_SWITCH_ON, /* 发 0x0007 等 Switched On */
-    CIA402_SEQ_ENABLE_OP, /* 发 0x000F 等 Operation Enabled */
-    CIA402_SEQ_ENABLED, /* 已使能, 维持 0x000F */
-    CIA402_SEQ_DISABLING, /* 正在禁用, 发 0x0006 */
-    CIA402_SEQ_ERROR, /* 超时/失败 */
-} CiA402_SeqState_t;
-
-static volatile CiA402_SeqState_t s_cia402_seq = CIA402_SEQ_IDLE;
-static uint32_t s_cia402_stepTick = 0; /* 当前步起始 tick (1ms 计数) */
 #define CIA402_STEP_TIMEOUT_MS  2000U   /* 单步超时保护 */
 /* IOmap buffer for EtherCAT process data */
 static char IOmap[4096];
@@ -87,7 +56,6 @@ typedef struct PACKED {
     int32 TargetVelocity;
     int8 OpModeSet;
     uint16 TouchProbe;
-    //		int8 temp;
 } SOEM_PDO_Out_t;
 
 PACKED_END
@@ -100,7 +68,6 @@ typedef struct PACKED {
     uint16 TouchProbeStatus;
     int32 TouchProbePos1;
     uint32 Digitalinputs;
-    //		int8 temp;
 } SOEM_PDO_In_t;
 
 PACKED_END
@@ -316,7 +283,7 @@ static void ethercat_monitor_task(
             (int)mode,
             last_wkc,
             expected_wkc,
-                time_i);
+            time_i);
 
         monitor_count++;
 
@@ -359,70 +326,6 @@ static void ethercat_monitor_task(
     }
 }
 
-static void ethercat_safe_op_cycle_forever(
-    int expected_wkc) {
-
-    int wkc;
-
-
-    TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
-
-    s_ecat_expected_wkc = expected_wkc;
-
-    s_ecat_cycle_count = 0U;
-    s_ecat_notify_timeout_count = 0U;
-    s_ecat_missed_cycle_count = 0U;
-    s_ecat_bad_wkc_count = 0U;
-
-    s_ecat_last_wkc = 0;
-    s_ecat_stable_done = 0U;
-    s_ecat_stable_pass = 0U;
-
-    /*
-     * GPT启动前先立即发送一帧，
-     * 避免OP切换后产生额外空闲间隔。
-     */
-    (void) ec_send_processdata();
-    wkc = ec_receive_processdata(
-        EC_TIMEOUTRET);
-
-    if (wkc < expected_wkc) {
-        USR_LOG_ERROR(
-            "Initial OP PDO failed: WKC=%d/%d",
-            wkc,
-            expected_wkc);
-    }
-
-
-    /*
-     * 在启动GPT之前提升为周期通信优先级。
-     */
-    vTaskPrioritySet(
-        current_task,
-        ETHERCAT_CYCLE_TASK_PRIORITY);
-
-    /*
-     * GPT启动后，本任务不能再执行阻塞日志。
-     */
-    if (gpt_init() != FSP_SUCCESS) {
-        vTaskDelete(NULL);
-    }
-
-    s_ecat_cycle_running = 1U;
-
-    for (;;) {
-        /*
-         * 正常情况下每4 ms收到一次通知。
-         * 8 ms超时仅用于识别GPT或调度异常。
-         */
-        xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
-        time_i++;
-
-
-        (void) ec_send_processdata();
-        ec_receive_processdata(EC_TIMEOUTRET);
-    }
-}
 
 /* 创建 SOEM 主站任务。任务已经存在时直接返回成功，防止链路抖动导致重复创建。 */
 usr_err_t ethercat_master_scan_start(void) {
@@ -558,17 +461,14 @@ static void ethercat_master_scan_task(void *pvParameters) {
                  (unsigned long)ec_slave[1].Obytes,
                  (unsigned long)ec_slave[1].Ibytes);
 
-
     if (ec_slave[1].Obytes != sizeof(SOEM_PDO_Out_t)) {
         USR_LOG_ERROR("RxPDO size mismatch");
         vTaskDelete(NULL);
     }
-
     if (ec_slave[1].Ibytes != sizeof(SOEM_PDO_In_t)) {
         USR_LOG_ERROR("TxPDO size mismatch");
         vTaskDelete(NULL);
     }
-
     ec_readstate();
 
     USR_LOG_INFO("After PDO map: state=0x%04X AL=0x%04X",
@@ -580,7 +480,6 @@ static void ethercat_master_scan_task(void *pvParameters) {
         USR_LOG_ERROR("Slave 1 does not support DC");
         vTaskDelete(NULL);
     }
-
     if (!ec_configdc()) {
         USR_LOG_ERROR("ec_configdc failed");
         vTaskDelete(NULL);
@@ -594,29 +493,24 @@ static void ethercat_master_scan_task(void *pvParameters) {
                ETHERCAT_DC_SYNC0_CYCLE_NS,
                0);
     ethercat_verify_dc(1);
-
+    /* Check current state after config */
+    ec_readstate();
     /*
     * DC和SYNC0都配置完成后，再手动请求SAFE-OP。
     */
+    USR_LOG_INFO("[ECAT] After config: slave1 state=0x%02x\r\n", ec_slave[1].state);
+
+    sv_out = (SOEM_PDO_Out_t *) ec_slave[1].outputs;
+    sv_in = (SOEM_PDO_In_t *) ec_slave[1].inputs;
+
     ec_slave[0].state = EC_STATE_SAFE_OP;
-
     int safeop_wkc = ec_writestate(0);
+    USR_LOG_INFO("SAFE-OP request sent: WKC=%d",safeop_wkc);
 
-    USR_LOG_INFO("SAFE-OP request sent: WKC=%d",
-                 safeop_wkc);
-
-    if (ec_statecheck(0,
-                      EC_STATE_SAFE_OP,
-                      EC_TIMEOUTSTATE) != EC_STATE_SAFE_OP) {
+    if (ec_statecheck(0,EC_STATE_SAFE_OP,EC_TIMEOUTSTATE) != EC_STATE_SAFE_OP) {
         ec_readstate();
-
-        USR_LOG_ERROR(
-            "SAFE-OP failed: slave=1 state=0x%04X AL=0x%04X %s",
-            ec_slave[1].state,
-            ec_slave[1].ALstatuscode,
-            ec_ALstatuscode2string(
-                ec_slave[1].ALstatuscode));
-
+        USR_LOG_ERROR("SAFE-OP failed: slave=1 state=0x%04X AL=0x%04X %s",
+            ec_slave[1].state,ec_slave[1].ALstatuscode,ec_ALstatuscode2string(ec_slave[1].ALstatuscode));
         vTaskDelete(NULL);
     }
 
@@ -627,31 +521,12 @@ static void ethercat_master_scan_task(void *pvParameters) {
     int invalid_count = 0;
     int wkc;
     TickType_t last_wake;
-
-    expected_wkc =
-            (ec_group[0].outputsWKC * 2) +
-            ec_group[0].inputsWKC;
+    expected_wkc =(ec_group[0].outputsWKC * 2) +ec_group[0].inputsWKC;
 
     USR_LOG_INFO("PDO WKC: outputs=%d inputs=%d expected=%d",
                  ec_group[0].outputsWKC,
                  ec_group[0].inputsWKC,
                  expected_wkc);
-
-    sv_out = (SOEM_PDO_Out_t *) ec_slave[1].outputs;
-    sv_in = (SOEM_PDO_In_t *) ec_slave[1].inputs;
-
-    if ((sv_out == NULL) || (sv_in == NULL)) {
-        USR_LOG_ERROR("PDO pointer is NULL");
-        vTaskDelete(NULL);
-    }
-
-    // memset(sv_out, 0, sizeof(*sv_out));
-
-    // sv_out->ControlWord = 0x0000U;
-    // sv_out->TargetPos = 0;
-    // sv_out->TargetVelocity = 0;
-    // sv_out->OpModeSet = 8;
-    // sv_out->TouchProbe = 0;
 
     last_wake = xTaskGetTickCount();
 
@@ -700,13 +575,6 @@ static void ethercat_master_scan_task(void *pvParameters) {
                  invalid_count);
     int op_reached = 0;
 
-    // /* 保持安全输出 */
-    // sv_out->ControlWord = 0x0000U;
-    // sv_out->TargetPos = sv_in->CurrentPosition;
-    // sv_out->TargetVelocity = 0;
-    // sv_out->OpModeSet = 8;
-    // sv_out->TouchProbe = 0;
-
     /* 请求所有从站进入 EtherCAT OP */
     ec_slave[0].state = EC_STATE_OPERATIONAL;
 
@@ -721,10 +589,6 @@ static void ethercat_master_scan_task(void *pvParameters) {
     for (int cycle = 0; cycle < 1250; cycle++) {
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(4));
 
-        // /* 进入驱动使能前始终保持当前位置 */
-        // sv_out->ControlWord = 0x0000U;
-        // sv_out->TargetPos = sv_in->CurrentPosition;
-        // sv_out->OpModeSet = 8;
 
         (void) ec_send_processdata();
         wkc = ec_receive_processdata(EC_TIMEOUTRET);
@@ -768,20 +632,6 @@ static void ethercat_master_scan_task(void *pvParameters) {
         wkc,
         expected_wkc);
 
-    /* 获取我们第 1 个从站（SV630N）的指针 */
-    sv_out = (SOEM_PDO_Out_t *) ec_slave[1].outputs;
-    sv_in = (SOEM_PDO_In_t *) ec_slave[1].inputs;
-
-    USR_LOG_INFO(
-        "EtherCAT OP reached: "
-        "state=0x%04X WKC=%d/%d",
-        ec_slave[1].state,
-        wkc,
-        expected_wkc);
-
-    /*
-     * 在启动4 ms GPT之前创建低优先级监控任务。
-     */
     if (s_ecat_monitor_task == NULL) {
         if (xTaskCreate(
                 ethercat_monitor_task,
@@ -808,4 +658,68 @@ static void ethercat_master_scan_task(void *pvParameters) {
      */
     ethercat_safe_op_cycle_forever(
         expected_wkc);
+}
+
+static void ethercat_safe_op_cycle_forever(
+    int expected_wkc) {
+    int wkc;
+
+
+    TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
+
+    s_ecat_expected_wkc = expected_wkc;
+
+    s_ecat_cycle_count = 0U;
+    s_ecat_notify_timeout_count = 0U;
+    s_ecat_missed_cycle_count = 0U;
+    s_ecat_bad_wkc_count = 0U;
+
+    s_ecat_last_wkc = 0;
+    s_ecat_stable_done = 0U;
+    s_ecat_stable_pass = 0U;
+
+    /*
+     * GPT启动前先立即发送一帧，
+     * 避免OP切换后产生额外空闲间隔。
+     */
+    (void) ec_send_processdata();
+    wkc = ec_receive_processdata(
+        EC_TIMEOUTRET);
+
+    if (wkc < expected_wkc) {
+        USR_LOG_ERROR(
+            "Initial OP PDO failed: WKC=%d/%d",
+            wkc,
+            expected_wkc);
+    }
+
+
+    /*
+     * 在启动GPT之前提升为周期通信优先级。
+     */
+    vTaskPrioritySet(
+        current_task,
+        ETHERCAT_CYCLE_TASK_PRIORITY);
+
+    /*
+     * GPT启动后，本任务不能再执行阻塞日志。
+     */
+    if (gpt_init() != FSP_SUCCESS) {
+        vTaskDelete(NULL);
+    }
+
+    s_ecat_cycle_running = 1U;
+
+    for (;;) {
+        /*
+         * 正常情况下每4 ms收到一次通知。
+         * 8 ms超时仅用于识别GPT或调度异常。
+         */
+        xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
+        time_i++;
+
+
+        (void) ec_send_processdata();
+        ec_receive_processdata(EC_TIMEOUTRET);
+    }
 }
