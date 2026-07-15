@@ -3,7 +3,7 @@
 #include "um_serial_io_api.h"
 #include "ethercat_port_monitor.h"
 #include "gpt.h"
-
+#include "ethercat_master.h"
 /* Main Thread entry function */
 /* pvParameters contains TaskHandle_t */
 void main_thread_entry(void *pvParameters) {
@@ -34,8 +34,14 @@ void main_thread_entry(void *pvParameters) {
         // xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
         // static int  i = 0;
         // R_BSP_PinToggle(BSP_IO_REGION_SAFE,BSP_IO_PORT_14_PIN_0);
-        vTaskSuspend(NULL);
+        // vTaskSuspend(NULL);
         // USR_LOG_INFO("------------------");
+        USR_LOG_INFO("StatusWord1:%x; TargetPosition:%ld, CurrentPosition1:%ld\r\n",
+                     input1s->StatusWord, output1s->TargetPos,
+                     input1s->CurrentPosition);
+        //   USR_LOG_INFO("t=%d,r=%ld,r=%ld,r=%ld\n",count,reft,reft1,ref_delta);
+        // USR_LOG_INFO("t=%d,r=%ld\n", count, reft);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 

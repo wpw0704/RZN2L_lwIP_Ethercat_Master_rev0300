@@ -1,108 +1,26 @@
 #include "ethercat_master.h"
 
-#include "ethercat_app_common.h"
-#include "ethercat_port_cfg.h"
-#include "FreeRTOS.h"
-#include "ethercat.h"
-#include "semphr.h"
-#include "task.h"
-#include <stdint.h>
-#include "ethercatprint.h"
-#include "gpt.h"
-
 #define DEBUG 1
 #define ETHERCAT_MASTER_TASK_NAME       "SOEM master"
 #define ETHERCAT_MASTER_TASK_STACK_SIZE (8192U)
-#if (configMAX_PRIORITIES < 4)
-#error "configMAX_PRIORITIES must be at least 4"
-#endif
 
 /*
  * 扫描、SDO和状态配置阶段使用的优先级。
  */
-#define ETHERCAT_MASTER_TASK_PRIORITY \
-(tskIDLE_PRIORITY + 3U)
-/*
- * OP后的4 ms周期通信优先级。
- * FreeRTOS任务优先级数值越大，优先级越高。
- */
-#define ETHERCAT_CYCLE_TASK_PRIORITY \
-(configMAX_PRIORITIES - 2U)
-/*
- * 低优先级监控日志任务。
- */
-#define ETHERCAT_MONITOR_TASK_PRIORITY \
-(tskIDLE_PRIORITY + 1U)
-#define ETHERCAT_MONITOR_STACK_BYTES (2048U)
-#define ETHERCAT_STABLE_TEST_CYCLES (7500U) /* 7500 × 4 ms = 30秒 */
-#define ETHERCAT_NOTIFY_TIMEOUT_MS  (8U)
-#define ETHERCAT_DC_SYNC0_CYCLE_NS      (4000000U)
-#define ETHERCAT_DC_WARMUP_MS           (1000U)
-#define ETHERCAT_OP_TIMEOUT_MS          (5000U)
+#if (configMAX_PRIORITIES < 3)
+#error "configMAX_PRIORITIES must be at least 3 for EtherCAT PDO priority"
+#endif
 
-#define CIA402_STEP_TIMEOUT_MS  2000U   /* 单步超时保护 */
+#define ETHERCAT_MASTER_TASK_PRIORITY (configMAX_PRIORITIES - 2U)
+
+#define ETHERCAT_DC_SYNC0_CYCLE_NS      (4000000U)
 /* IOmap buffer for EtherCAT process data */
 static char IOmap[4096];
-/* SV630 CSP 模式下使用的 PDO 映射。
- * RxPDO 0x1600: 主站 -> 驱动器，ControlWord + TargetPosition + TargetVelocity。
- * TxPDO 0x1A00: 驱动器 -> 主站，StatusWord + ActualPosition + ActualVelocity + ActualTorque。
- * ModeOfOperation 不放进 PDO，避免 8 bit 对象造成同步管理器长度奇数字节问题。 */
 #pragma pack(push, 1)
 
-PACKED_BEGIN
-typedef struct PACKED {
-    uint16 ControlWord;
-    int32 TargetPos;
-    int32 TargetVelocity;
-    int8 OpModeSet;
-    uint16 TouchProbe;
-} SOEM_PDO_Out_t;
-
-PACKED_END
-
-PACKED_BEGIN
-typedef struct PACKED {
-    uint16 StatusWord;
-    int32 CurrentPosition;
-    int8 OpModeNow;
-    uint16 TouchProbeStatus;
-    int32 TouchProbePos1;
-    uint32 Digitalinputs;
-} SOEM_PDO_In_t;
-
-PACKED_END
 #pragma pack(pop)
-
-static SOEM_PDO_Out_t s_out_shadow;
-static SOEM_PDO_In_t s_in_shadow;
-
-/* 指向 SOEM 内部 PDO 缓冲的快捷指针 */
-static SOEM_PDO_Out_t *sv_out = NULL;
-static SOEM_PDO_In_t *sv_in = NULL;
-
-static TaskHandle_t s_ecat_monitor_task = NULL;
-
-static volatile uint8_t s_ecat_cycle_running = 0U;
-static volatile uint8_t s_ecat_stable_done = 0U;
-static volatile uint8_t s_ecat_stable_pass = 0U;
-static volatile uint32_t s_ecat_cycle_count = 0U;
-static volatile uint32_t s_ecat_notify_timeout_count = 0U;
-static volatile uint32_t s_ecat_missed_cycle_count = 0U;
-static volatile uint32_t s_ecat_bad_wkc_count = 0U;
-static volatile int s_ecat_last_wkc = 0;
-static volatile int s_ecat_expected_wkc = 0;
-static volatile uint16_t s_ecat_monitor_status_word = 0U;
-static volatile int32_t s_ecat_monitor_position = 0;
-static volatile int8_t s_ecat_monitor_mode = 0;
-static volatile int32_t s_ecat_actual_position = 0;
-static volatile uint8_t s_ecat_position_valid = 0U;
-static uint64 time_i = 0;
-static volatile uint8_t s_servo_setup_ok = 0U;
-
-static void ethercat_monitor_task(void *pvParameters);
-
-static void ethercat_safe_op_cycle_forever(
-    int expected_wkc);
+PDO_Output *output1s;
+PDO_Input *input1s;
 
 /* SOEM 主站任务入口：完成从站扫描、SV630 PDO/DC 配置，并请求进入 OP。 */
 static void ethercat_master_scan_task(void *pvParameters);
@@ -145,202 +63,120 @@ int write32(uint16 slave, uint16 index, uint8 subindex, int value) {
     return rtn;
 }
 
-static int read16(uint16 slave,
-                  uint16 index,
-                  uint8 subindex,
-                  uint16 *value) {
-    int size;
-    int ret;
+// PDO配置
+static int Servosetup(uint16 slvcnt) {
+    printf(" slvcnt = %d\r\n", slvcnt);
+    write8(slvcnt, 0x1C12, 00, 0); // 清空0x1c12
+    write8(slvcnt, 0x1600, 00, 0); // 清空0x1600
+    write32(slvcnt, 0x1600, 01, 0x60400010); // 写入0x1600
+    write32(slvcnt, 0x1600, 02, 0x607A0020); // 写入0x1600
+    write32(slvcnt, 0x1600, 03, 0x60FF0020); // 写入0x1600
+    write32(slvcnt, 0x1600, 04, 0x60600008); // 写入0x1600
+    write32(slvcnt, 0x1600, 05, 0x60B80010); // 写入0x1600
+    write8(slvcnt, 0x1600, 00, 5);
 
-    if (value == NULL) {
-        return 0;
-    }
+    write16(slvcnt, 0x1C12, 01, 0x1600); // 设定RxPDO映射
+    write8(slvcnt, 0x1C12, 00, 1);
 
-    *value = 0U;
-    size = sizeof(*value);
-    ret = ec_SDOread(slave, index, subindex,FALSE, &size, value,EC_TIMEOUTRXM);
+    write8(slvcnt, 0x1C13, 00, 00); // 清空0x1C12计数
+    write8(slvcnt, 0x1A00, 00, 00); // 清空0x1600计数
+    write32(slvcnt, 0x1A00, 01, 0x60410010); // 写入0x1A00
+    write32(slvcnt, 0x1A00, 02, 0x60640020); // 写入0x1A00
+    write32(slvcnt, 0x1A00, 03, 0x60610008); // 写入0x1A00
+    write32(slvcnt, 0x1A00, 04, 0x60B90010); // 写入0x1A00
+    write32(slvcnt, 0x1A00, 05, 0x60BA0020); // 写入0x1A00
+    write32(slvcnt, 0x1A00, 06, 0x60FD0020); // 写入0x1A00
+    write8(slvcnt, 0x1A00, 00, 06);
 
-    if (ret <= 0) {
-        USR_LOG_ERROR("SDO read failed: slave=%u index=0x%04X:%02X", slave, index, subindex);
-        return 0;
-    }
+    write16(slvcnt, 0x1C13, 01, 0x1A00);
+    write8(slvcnt, 0x1C13, 00, 01);
 
-    return ret;
+    return 0;
 }
 
-static int Servosetup(uint16 slave) {
-    s_servo_setup_ok = 0U;
-    uint16 sync_type_out = 0U;
-    uint16 sync_type_in = 0U;
-    if (!write8(slave, 0x1C12, 0x00, 0)) return 0;
-
-    if (!write8(slave, 0x1600, 0x00, 0)) return 0;
-    if (!write32(slave, 0x1600, 0x01, 0x60400010)) return 0;
-    if (!write32(slave, 0x1600, 0x02, 0x607A0020)) return 0;
-    if (!write32(slave, 0x1600, 0x03, 0x60FF0020)) return 0;
-    if (!write32(slave, 0x1600, 0x04, 0x60600008)) return 0;
-    if (!write32(slave, 0x1600, 0x05, 0x60B80010)) return 0;
-    if (!write8(slave, 0x1600, 0x00, 5)) return 0;
-
-    if (!write16(slave, 0x1C12, 0x01, 0x1600)) return 0;
-    if (!write8(slave, 0x1C12, 0x00, 1)) return 0;
-
-    if (!write8(slave, 0x1C13, 0x00, 0)) return 0;
-
-    if (!write8(slave, 0x1A00, 0x00, 0)) return 0;
-    if (!write32(slave, 0x1A00, 0x01, 0x60410010)) return 0;
-    if (!write32(slave, 0x1A00, 0x02, 0x60640020)) return 0;
-    if (!write32(slave, 0x1A00, 0x03, 0x60610008)) return 0;
-    if (!write32(slave, 0x1A00, 0x04, 0x60B90010)) return 0;
-    if (!write32(slave, 0x1A00, 0x05, 0x60BA0020)) return 0;
-    if (!write32(slave, 0x1A00, 0x06, 0x60FD0020)) return 0;
-    if (!write8(slave, 0x1A00, 0x00, 6)) return 0;
-
-    if (!write16(slave, 0x1C13, 0x01, 0x1A00)) return 0;
-    if (!write8(slave, 0x1C13, 0x00, 1)) return 0;
-
-    //    /*
-    // * CSP插补周期：
-    // * 4 × 10^-3秒 = 4 ms
-    // */
-    //    if (!write8(slave, 0x60C2, 0x01, 4)) return 0;
-    //    if (!write8(slave, 0x60C2, 0x02, -3))return 0;
-
-    /*
-     * 关键修复：
-     * 0 = FreeRun
-     * 2 = DC SYNC0
-     */
-    if (!write16(slave, 0x1C32, 0x01, 2)) return 0;
-    if (!write16(slave, 0x1C33, 0x01, 2)) return 0;
-    if (!read16(slave, 0x1C32, 0x01, &sync_type_out)) {
-        return 0;
-    }
-
-    if (!read16(slave, 0x1C33, 0x01, &sync_type_in)) {
-        return 0;
-    }
-
-    USR_LOG_INFO("Sync type: SM2=%u SM3=%u",
-                 sync_type_out,
-                 sync_type_in);
-
-    if ((sync_type_out != 2U) ||
-        (sync_type_in != 2U)) {
-        return 0;
-    }
-    s_servo_setup_ok = 1U;
-    return 1;
-}
-
-static void ethercat_monitor_task(
-    void *pvParameters) {
-    TickType_t last_wake;
-    uint32_t monitor_count = 0U;
-    uint8_t final_result_reported = 0U;
-
-    (void) pvParameters;
-
-    last_wake = xTaskGetTickCount();
-
-    for (;;) {
-        /*
-         * 每500 ms运行一次监控任务。
-         * 打印频率为2 Hz，先避免串口负载过大。
-         */
-        vTaskDelayUntil(
-            &last_wake,
-            pdMS_TO_TICKS(500U));
-
-        if ((!s_ecat_cycle_running) ||
-            (!s_ecat_position_valid)) {
-            continue;
-        }
-
-        /*
-         * 从EtherCAT周期任务维护的影子变量中取值。
-         * 不要在此任务直接读取sv_in。
-         */
-        int32_t position = s_ecat_monitor_position;
-
-        uint16_t status_word = s_ecat_monitor_status_word;
-
-        int8_t mode = s_ecat_monitor_mode;
-
-        int last_wkc = s_ecat_last_wkc;
-
-        int expected_wkc = s_ecat_expected_wkc;
-
-        /*
-         * 实时位置打印就在这里。
-         */
-        USR_LOG_INFO(
-            "Servo position: "
-            "Pos=%ld counts "
-            "SW=0x%04X Mode=%d WKC=%d/%d time=%d",
-            (long)sv_in->CurrentPosition,
-            sv_in->StatusWord,
-            (int)mode,
-            last_wkc,
-            expected_wkc,
-            time_i);
-
-        monitor_count++;
-
-        /*
-         * 每5秒额外打印一次稳定性统计。
-         * 500 ms × 10 = 5秒。
-         */
-        if (monitor_count >= 10U) {
-            monitor_count = 0U;
-
-            USR_LOG_INFO(
-                "OP statistics: "
-                "cycles=%lu timeout=%lu "
-                "missed=%lu badWKC=%lu ",
-                (unsigned long)
-                s_ecat_cycle_count,
-                (unsigned long)
-                s_ecat_notify_timeout_count,
-                (unsigned long)
-                s_ecat_missed_cycle_count,
-                (unsigned long)
-                s_ecat_bad_wkc_count);
-        }
-
-        /*
-         * 30秒测试结束后只打印一次结果。
-         */
-        if (s_ecat_stable_done &&
-            !final_result_reported) {
-            if (s_ecat_stable_pass) {
-                USR_LOG_INFO(
-                    "30-second stable OP test PASSED");
-            } else {
-                USR_LOG_ERROR(
-                    "30-second stable OP test FAILED");
+void ecat_init(void) {
+    int slc;
+    /* initialise SOEM, bind socket to ifname */
+    if (ec_init("eth0")) {
+        USR_LOG_INFO("ec_init succeeded.");
+        if (ec_config_init(TRUE) > 0) {
+            if (ec_slavecount >= 1) {
+                for (slc = 1; slc <= ec_slavecount; slc++) {
+                    printf("%ld slaves found and configured. %ld \r\n", ec_slave[slc].eep_man, ec_slave[slc].eep_id);
+                    printf("Found name=%s at position %d\r\n", ec_slave[slc].name, slc);
+                    printf("Found configadr=%d at position %d\r\n", ec_slave[slc].configadr, slc);
+                    //					if ((ec_slave[slc].eep_man == 0x100000) && (ec_slave[slc].eep_id == 0xc0112))
+                    ec_slave[slc].PO2SOconfig = &Servosetup;
+                    //					else
+                    //						USR_LOG_INFO("NULL");
+                }
             }
 
-            final_result_reported = 1U;
+            ec_configdc();
+            // for (slc = 1; slc <= ec_slavecount; slc++)
+            ec_dcsync0(1,TRUE,ETHERCAT_DC_SYNC0_CYCLE_NS,0);
+            ec_config_map(&IOmap);
+            printf("Slaves mapped, state to SAFE_OP.\n \r");
+            /* wait for all slaves to reach SAFE_OP state */
+            ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE);
+            /* read indevidual slave state and store in ec_slave[] */
+            ec_readstate();
+            for (slc = 0; slc <= ec_slavecount; slc++)
+                printf("Slave %d State=0x%04x\r\n", slc, ec_slave[slc].state);
+            printf("segments : %d : %ld %ld %ld %ld\n", ec_group[0].nsegments, ec_group[0].IOsegment[0],
+                   ec_group[0].IOsegment[1], ec_group[0].IOsegment[2], ec_group[0].IOsegment[3]);
+            ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE);
+            printf("Request operational state for all slaves\n");
+            int expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
+            printf("Calculated workcounter %d\n", expectedWKC);
+            /* send one valid process data to make outputs in slaves happy*/
+            ec_send_processdata();
+            ec_receive_processdata(EC_TIMEOUTRET);
+            ec_writestate(0);
+            R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
+            /* wait for all slaves to reach OP state */
+            do {
+                for (slc = 0; slc <= ec_slavecount; slc++) {
+                    ec_slave[slc].state = EC_STATE_OPERATIONAL;
+                    ec_writestate(slc);
+                    printf("Slave %d State=0x%04x\r\n", slc, ec_slave[slc].state);
+                }
+            } while ((ec_slave[0].state != EC_STATE_OPERATIONAL) || (ec_slave[1].state != EC_STATE_OPERATIONAL));
+            R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
+            if (ec_slave[0].state == EC_STATE_OPERATIONAL) {
+                for (slc = 1; slc <= ec_slavecount; slc++) {
+                    output1s = (PDO_Output *) ec_slave[slc].outputs;
+                    input1s = (PDO_Input *) ec_slave[slc].inputs;
+                }
+                /*
+                * GPT启动后，本任务不能再执行阻塞日志。*/
+                if (gpt_init() != FSP_SUCCESS) {
+                    USR_LOG_INFO("GPT FARIL");
+                }
+                USR_LOG_INFO("all slaves reached operational state.");
+            } else {
+                printf("E/BOX not found in slave configuration.\r\n");
+            }
+        } else {
+            printf("No slaves found!\r\n");
         }
+    } else {
+        printf("No socket connection Excecute as root\r\n");
     }
 }
 
 
 /* 创建 SOEM 主站任务。任务已经存在时直接返回成功，防止链路抖动导致重复创建。 */
 usr_err_t ethercat_master_scan_start(void) {
-    ethercat_app_notify_t *p_notify;
     usr_err_t usr_err = ethercat_app_common_open();
 
     if (USR_SUCCESS != usr_err) {
         return usr_err;
     }
-
-    p_notify = ethercat_app_notify_get();
+    ethercat_app_notify_t *p_notify = ethercat_app_notify_get();
     if (NULL != p_notify->master_scan_task) {
         return USR_SUCCESS;
     }
-
     ethercat_app_master_scan_set_state(ETHERCAT_MASTER_SCAN_STATE_RUNNING, 0);
 
     if (pdPASS != xTaskCreate(ethercat_master_scan_task,
@@ -357,369 +193,22 @@ usr_err_t ethercat_master_scan_start(void) {
     return USR_SUCCESS;
 }
 
-static void ethercat_verify_dc(uint16 slave) {
-    uint16 config_address = ec_slave[slave].configadr;
-    uint8 dcsyncact = 0U;
-    uint32 cycle_time = 0U;
-    uint64 start_time = 0U;
-    uint64 system_time = 0U;
 
-    (void) ec_FPRD(config_address,
-                   0x0981,
-                   sizeof(dcsyncact),
-                   &dcsyncact,
-                   EC_TIMEOUTRET);
-
-    (void) ec_FPRD(config_address,
-                   0x09A0,
-                   sizeof(cycle_time),
-                   &cycle_time,
-                   EC_TIMEOUTRET);
-
-    (void) ec_FPRD(config_address,
-                   0x0990,
-                   sizeof(start_time),
-                   &start_time,
-                   EC_TIMEOUTRET);
-
-    (void) ec_FPRD(config_address,
-                   0x0910,
-                   sizeof(system_time),
-                   &system_time,
-                   EC_TIMEOUTRET);
-
-    USR_LOG_INFO("DC: SyncAct=0x%02X Cycle=%lu ns",
-                 dcsyncact,
-                 (unsigned long)cycle_time);
-
-    USR_LOG_INFO("DC: Start hi=%08lX lo=%08lX",
-                 (unsigned long)(start_time >> 32),
-                 (unsigned long)start_time);
-
-    USR_LOG_INFO("DC: Time  hi=%08lX lo=%08lX",
-                 (unsigned long)(system_time >> 32),
-                 (unsigned long)system_time);
-}
 
 static void ethercat_master_scan_task(void *pvParameters) {
-    int slave_count;
-    int slave;
-
     (void) pvParameters;
-
     USR_LOG_INFO("SOEM master start on %s.", ETHERCAT_MASTER_IFNAME);
-
-    /* 初始化 SOEM，oshw_mac 适配层会把 EtherCAT 帧绑定到 RZ/N2L port1。 */
-    if (ecx_init(&ecx_context, ETHERCAT_MASTER_IFNAME) <= 0) {
-        USR_LOG_ERROR("SOEM ecx_init failed.");
-        ethercat_app_notify_get()->master_scan_task = NULL;
-        ethercat_app_master_scan_set_state(ETHERCAT_MASTER_SCAN_STATE_FAILED, 0);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    /* 扫描从站并进入 PRE-OP。 */
-    slave_count = ecx_config_init(&ecx_context, FALSE);
-    if (slave_count <= 0) {
-        USR_LOG_WARN("SOEM scan finished, no EtherCAT slaves found.");
-        ecx_close(&ecx_context);
-        ethercat_app_notify_get()->master_scan_task = NULL;
-        ethercat_app_master_scan_set_state(ETHERCAT_MASTER_SCAN_STATE_FAILED, 0);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    ethercat_app_master_scan_set_state(ETHERCAT_MASTER_SCAN_STATE_DONE, slave_count);
-    USR_LOG_INFO("SOEM scan found %d EtherCAT slave(s).", slave_count);
-
-    for (slave = 1; slave <= ec_slavecount; slave++) {
-        USR_LOG_INFO("Slave %d: name=%s, config=0x%04x, state=0x%04x, vendor=0x%08lx, product=0x%08lx.",
-                     slave,
-                     ec_slave[slave].name,
-                     ec_slave[slave].configadr,
-                     ec_slave[slave].state,
-                     ec_slave[slave].eep_man,
-                     ec_slave[slave].eep_id);
-    }
-
-    ec_slave[1].PO2SOconfig = Servosetup;
-    /*
-    * 禁止ec_config_map()自动请求SAFE-OP。
-    * 因为SV630已经设置为DC Sync0模式，
-    * 必须先完成DC/SYNC0配置，再进入SAFE-OP。
-    */
-    ecx_context.manualstatechange = 1; //开启手动状态切换
-    /* 此函数内部会调用Servosetup */
-    int iomap_size = ec_config_map(IOmap);
-
-    if ((iomap_size <= 0) || (!s_servo_setup_ok)) {
-        USR_LOG_ERROR("PDO map failed");
-        vTaskDelete(NULL);
-    }
-
-    USR_LOG_INFO("Obytes=%lu Ibytes=%lu",
-                 (unsigned long)ec_slave[1].Obytes,
-                 (unsigned long)ec_slave[1].Ibytes);
-
-    if (ec_slave[1].Obytes != sizeof(SOEM_PDO_Out_t)) {
-        USR_LOG_ERROR("RxPDO size mismatch");
-        vTaskDelete(NULL);
-    }
-    if (ec_slave[1].Ibytes != sizeof(SOEM_PDO_In_t)) {
-        USR_LOG_ERROR("TxPDO size mismatch");
-        vTaskDelete(NULL);
-    }
-    ec_readstate();
-
-    USR_LOG_INFO("After PDO map: state=0x%04X AL=0x%04X",
-                 ec_slave[1].state,
-                 ec_slave[1].ALstatuscode);
-
-
-    if (!ec_slave[1].hasdc) {
-        USR_LOG_ERROR("Slave 1 does not support DC");
-        vTaskDelete(NULL);
-    }
-    if (!ec_configdc()) {
-        USR_LOG_ERROR("ec_configdc failed");
-        vTaskDelete(NULL);
-    }
-
-    USR_LOG_INFO("ec_configdc success");
-
-    /* 4 ms SYNC0 */
-    ec_dcsync0(1,
-               TRUE,
-               ETHERCAT_DC_SYNC0_CYCLE_NS,
-               0);
-    ethercat_verify_dc(1);
-    /* Check current state after config */
-    ec_readstate();
-    /*
-    * DC和SYNC0都配置完成后，再手动请求SAFE-OP。
-    */
-    USR_LOG_INFO("[ECAT] After config: slave1 state=0x%02x\r\n", ec_slave[1].state);
-
-    sv_out = (SOEM_PDO_Out_t *) ec_slave[1].outputs;
-    sv_in = (SOEM_PDO_In_t *) ec_slave[1].inputs;
-
-    ec_slave[0].state = EC_STATE_SAFE_OP;
-    int safeop_wkc = ec_writestate(0);
-    USR_LOG_INFO("SAFE-OP request sent: WKC=%d",safeop_wkc);
-
-    if (ec_statecheck(0,EC_STATE_SAFE_OP,EC_TIMEOUTSTATE) != EC_STATE_SAFE_OP) {
-        ec_readstate();
-        USR_LOG_ERROR("SAFE-OP failed: slave=1 state=0x%04X AL=0x%04X %s",
-            ec_slave[1].state,ec_slave[1].ALstatuscode,ec_ALstatuscode2string(ec_slave[1].ALstatuscode));
-        vTaskDelete(NULL);
-    }
-
-    USR_LOG_INFO("EtherCAT SAFE-OP reached");
-
-    int expected_wkc;
-    int valid_count = 0;
-    int invalid_count = 0;
-    int wkc;
-    TickType_t last_wake;
-    expected_wkc =(ec_group[0].outputsWKC * 2) +ec_group[0].inputsWKC;
-
-    USR_LOG_INFO("PDO WKC: outputs=%d inputs=%d expected=%d",
-                 ec_group[0].outputsWKC,
-                 ec_group[0].inputsWKC,
-                 expected_wkc);
-
-    last_wake = xTaskGetTickCount();
-
-    for (int cycle = 0; cycle < 250; cycle++) {
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(4));
-
-        (void) ec_send_processdata();
-        wkc = ec_receive_processdata(
-            EC_TIMEOUTRET);
-
-        s_ecat_last_wkc = wkc;
-        if (wkc >= expected_wkc) {
-            s_ecat_actual_position =
-                    sv_in->CurrentPosition;
-
-            s_ecat_position_valid = 1U;
-        } else {
-            s_ecat_bad_wkc_count++;
-        }
-
-        if (wkc >= expected_wkc) {
-            valid_count++;
-            /*
-             * 收到实际位置后，让目标位置跟随当前位置。
-             * 避免后续使能时突然跳到0位置。
-             */
-            sv_out->TargetPos = sv_in->CurrentPosition;
-        } else {
-            invalid_count++;
-        }
-
-        if ((cycle % 25) == 0) {
-            USR_LOG_INFO(
-                "SAFEOP PDO: WKC=%d/%d SW=0x%04X Pos=%ld Mode=%d DC=%08lX",
-                wkc,
-                expected_wkc,
-                sv_in->StatusWord,
-                (long)sv_in->CurrentPosition,
-                (int)sv_in->OpModeNow,
-                (unsigned long)ec_DCtime);
-        }
-    }
-
-    USR_LOG_INFO("SAFEOP PDO result: valid=%d invalid=%d",
-                 valid_count,
-                 invalid_count);
-    int op_reached = 0;
-
-    /* 请求所有从站进入 EtherCAT OP */
-    ec_slave[0].state = EC_STATE_OPERATIONAL;
-
-    int state_wkc = ec_writestate(0);
-
-    USR_LOG_INFO("OP request sent: stateWKC=%d", state_wkc);
-
-    /*
-     * 请求OP期间必须继续进行周期PDO通信。
-     * 1250 × 4 ms约为5秒。
-     */
-    for (int cycle = 0; cycle < 1250; cycle++) {
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(4));
-
-
-        (void) ec_send_processdata();
-        wkc = ec_receive_processdata(EC_TIMEOUTRET);
-
-        /* 每100ms读取一次EtherCAT状态 */
-        if ((cycle % 25) == 0) {
-            ec_readstate();
-
-            USR_LOG_INFO(
-                "OP wait: state=0x%04X AL=0x%04X "
-                "WKC=%d/%d SW=0x%04X Mode=%d",
-                ec_slave[1].state,
-                ec_slave[1].ALstatuscode,
-                wkc,
-                expected_wkc,
-                sv_in->StatusWord,
-                (int)sv_in->OpModeNow);
-
-            if ((ec_slave[1].state & 0x000FU) ==
-                EC_STATE_OPERATIONAL) {
-                op_reached = 1;
-                break;
-            }
-        }
-    }
-
-    if (!op_reached) {
-        ec_readstate();
-
-        USR_LOG_ERROR(
-            "EtherCAT OP failed: state=0x%04X AL=0x%04X",
-            ec_slave[1].state,
-            ec_slave[1].ALstatuscode);
-
-        vTaskDelete(NULL);
-    }
-
-    USR_LOG_INFO(
-        "EtherCAT OP reached: state=0x%04X WKC=%d/%d",
-        ec_slave[1].state,
-        wkc,
-        expected_wkc);
-
-    if (s_ecat_monitor_task == NULL) {
-        if (xTaskCreate(
-                ethercat_monitor_task,
-                "ECAT monitor",
-                ETHERCAT_MONITOR_STACK_BYTES /
-                sizeof(StackType_t),
-                NULL,
-                ETHERCAT_MONITOR_TASK_PRIORITY,
-                &s_ecat_monitor_task) != pdPASS) {
-            /*
-             * 监控任务失败不会阻止周期通信，
-             * 但先记录错误。
-             */
-            USR_LOG_ERROR(
-                "EtherCAT monitor task create failed");
-        }
-    }
-
-    USR_LOG_INFO(
-        "Starting 30-second stable OP test");
-
-    /*
-     * 进入后不再返回。
-     */
-    ethercat_safe_op_cycle_forever(
-        expected_wkc);
-}
-
-static void ethercat_safe_op_cycle_forever(
-    int expected_wkc) {
-    int wkc;
-
-
-    TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
-
-    s_ecat_expected_wkc = expected_wkc;
-
-    s_ecat_cycle_count = 0U;
-    s_ecat_notify_timeout_count = 0U;
-    s_ecat_missed_cycle_count = 0U;
-    s_ecat_bad_wkc_count = 0U;
-
-    s_ecat_last_wkc = 0;
-    s_ecat_stable_done = 0U;
-    s_ecat_stable_pass = 0U;
-
-    /*
-     * GPT启动前先立即发送一帧，
-     * 避免OP切换后产生额外空闲间隔。
-     */
-    (void) ec_send_processdata();
-    wkc = ec_receive_processdata(
-        EC_TIMEOUTRET);
-
-    if (wkc < expected_wkc) {
-        USR_LOG_ERROR(
-            "Initial OP PDO failed: WKC=%d/%d",
-            wkc,
-            expected_wkc);
-    }
-
-
-    /*
-     * 在启动GPT之前提升为周期通信优先级。
-     */
-    vTaskPrioritySet(
-        current_task,
-        ETHERCAT_CYCLE_TASK_PRIORITY);
-
-    /*
-     * GPT启动后，本任务不能再执行阻塞日志。
-     */
-    if (gpt_init() != FSP_SUCCESS) {
-        vTaskDelete(NULL);
-    }
-
-    s_ecat_cycle_running = 1U;
+    ecat_init();
 
     for (;;) {
         /*
          * 正常情况下每4 ms收到一次通知。
-         * 8 ms超时仅用于识别GPT或调度异常。
          */
         xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
-        time_i++;
-
 
         (void) ec_send_processdata();
         ec_receive_processdata(EC_TIMEOUTRET);
     }
 }
+
+

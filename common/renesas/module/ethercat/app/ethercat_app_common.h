@@ -21,6 +21,7 @@ typedef struct st_ethercat_app_notify
 
     /* SOEM 主站扫描任务句柄，用于防止重复创建扫描任务，后续可扩展为主站状态机任务。 */
     TaskHandle_t master_scan_task;
+    TaskHandle_t master_monitor_task;
 
     /* 主站扫描完成信号量：DONE/FAILED 时释放，其他任务可等待该信号后进入下一阶段。 */
     SemaphoreHandle_t master_scan_done_sem;

@@ -7,17 +7,16 @@ SemaphoreHandle_t s_gpt_cycle_semaphore = NULL;
 static bool s_gpt_opened = false;
 static bool s_gpt_started = false;
 
-// void gpt_set_cycle_semaphore(SemaphoreHandle_t semaphore_handle)
-// {
-//     /*
-//      * Set the binary semaphore before starting GPT.
-//      * Stop GPT before clearing the semaphore handle.
-//      */
-//     s_gpt_cycle_semaphore = semaphore_handle;
-// }
-
 fsp_err_t gpt_init(void) {
     fsp_err_t err;
+
+    if (s_gpt_cycle_semaphore == NULL) {
+        s_gpt_cycle_semaphore = xSemaphoreCreateBinary();
+        if (s_gpt_cycle_semaphore == NULL) {
+            USR_LOG_ERROR("GPT semaphore create failed");
+            return FSP_ERR_NOT_INITIALIZED;
+        }
+    }
 
     if (!s_gpt_opened) {
         err = R_GPT_Open(&g_timer0_ctrl,
@@ -49,7 +48,7 @@ fsp_err_t gpt_init(void) {
     }
 
     s_gpt_started = true;
-    s_gpt_cycle_semaphore = xSemaphoreCreateBinary();
+
     return FSP_SUCCESS;
 }
 
