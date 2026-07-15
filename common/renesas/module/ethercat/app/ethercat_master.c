@@ -34,9 +34,22 @@
 #define ETHERCAT_MONITOR_TASK_PRIORITY \
 (tskIDLE_PRIORITY + 1U)
 #define ETHERCAT_MONITOR_STACK_BYTES (2048U)
-#define ETHERCAT_STABLE_TEST_CYCLES (7500U) /* 7500 × 4 ms = 30秒 */
-#define ETHERCAT_NOTIFY_TIMEOUT_MS  (8U)
-#define ETHERCAT_DC_SYNC0_CYCLE_NS      (4000000U)
+
+/*
+ * GPT 2 ms只作为FreeRTOS唤醒节拍。
+ * 驱动器DC/SYNC0仍为4 ms，所以每2次GPT通知才做一次PDO交换。
+ */
+#define ETHERCAT_GPT_CYCLE_MS          (2U)
+#define ETHERCAT_DC_CYCLE_MS           (4U)
+#define ETHERCAT_GPT_TICKS_PER_PDO \
+(ETHERCAT_DC_CYCLE_MS / ETHERCAT_GPT_CYCLE_MS)
+
+/* 30秒稳定测试，按真正PDO交换次数计算：30000 / 4 = 7500。 */
+#define ETHERCAT_STABLE_TEST_CYCLES \
+(30000U / ETHERCAT_DC_CYCLE_MS)
+
+#define ETHERCAT_NOTIFY_TIMEOUT_MS     (6U)
+#define ETHERCAT_DC_SYNC0_CYCLE_NS     (4000000U)
 #define ETHERCAT_DC_WARMUP_MS           (1000U)
 #define ETHERCAT_OP_TIMEOUT_MS          (5000U)
 
@@ -137,6 +150,10 @@ static void ethercat_monitor_task(void *pvParameters);
 static void ethercat_safe_op_cycle_forever(
     int expected_wkc);
 
+static void ethercat_publish_valid_pdo_input(void);
+
+static void ethercat_write_safe_pdo_output(void);
+
 /* SOEM 主站任务入口：完成从站扫描、SV630 PDO/DC 配置，并请求进入 OP。 */
 static void ethercat_master_scan_task(void *pvParameters);
 
@@ -199,6 +216,42 @@ static int read16(uint16 slave,
     }
 
     return ret;
+}
+
+static void ethercat_publish_valid_pdo_input(void) {
+    if (sv_in == NULL) {
+        return;
+    }
+
+    /*
+     * 只有WKC正确时才复制PDO输入。
+     * 监控任务只读这些影子变量，不直接读sv_in，避免断网/坏WKC时打印旧缓存。
+     */
+    s_in_shadow = *sv_in;
+
+    s_ecat_actual_position = s_in_shadow.CurrentPosition;
+    s_ecat_monitor_position = s_in_shadow.CurrentPosition;
+    s_ecat_monitor_status_word = s_in_shadow.StatusWord;
+    s_ecat_monitor_mode = s_in_shadow.OpModeNow;
+    s_ecat_position_valid = 1U;
+}
+
+static void ethercat_write_safe_pdo_output(void) {
+    if (sv_out == NULL) {
+        return;
+    }
+
+    /*
+     * 当前阶段先不使能驱动器，只保持安全控制字。
+     * TargetPos每个PDO周期跟随上一帧有效ActualPosition，防止后续使能时目标位置跳变。
+     */
+    s_out_shadow.ControlWord = 0x0000U;
+    s_out_shadow.TargetPos = s_ecat_actual_position;
+    s_out_shadow.TargetVelocity = 0;
+    s_out_shadow.OpModeSet = 8;
+    s_out_shadow.TouchProbe = 0;
+
+    *sv_out = s_out_shadow;
 }
 
 static int Servosetup(uint16 slave) {
@@ -266,8 +319,7 @@ static int Servosetup(uint16 slave) {
     return 1;
 }
 
-static void ethercat_monitor_task(
-    void *pvParameters) {
+static void ethercat_monitor_task(void *pvParameters) {
     TickType_t last_wake;
     uint32_t monitor_count = 0U;
     uint8_t final_result_reported = 0U;
@@ -277,53 +329,37 @@ static void ethercat_monitor_task(
     last_wake = xTaskGetTickCount();
 
     for (;;) {
-        /*
-         * 每500 ms运行一次监控任务。
-         * 打印频率为2 Hz，先避免串口负载过大。
-         */
-        vTaskDelayUntil(
-            &last_wake,
-            pdMS_TO_TICKS(500U));
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(500U));
 
-        if ((!s_ecat_cycle_running) ||
-            (!s_ecat_position_valid)) {
+        if (!s_ecat_cycle_running) {
             continue;
         }
 
         /*
          * 从EtherCAT周期任务维护的影子变量中取值。
-         * 不要在此任务直接读取sv_in。
+         * 不要在此任务直接读取sv_in，否则断网/坏WKC时会打印旧缓存。
          */
         int32_t position = s_ecat_monitor_position;
-
         uint16_t status_word = s_ecat_monitor_status_word;
-
         int8_t mode = s_ecat_monitor_mode;
-
         int last_wkc = s_ecat_last_wkc;
-
         int expected_wkc = s_ecat_expected_wkc;
+        uint8_t position_valid = s_ecat_position_valid;
 
-        /*
-         * 实时位置打印就在这里。
-         */
         USR_LOG_INFO(
             "Servo position: "
             "Pos=%ld counts "
-            "SW=0x%04X Mode=%d WKC=%d/%d time=%d",
-            (long)sv_in->CurrentPosition,
-            sv_in->StatusWord,
+            "SW=0x%04X Mode=%d WKC=%d/%d PDO=%s time=%lu",
+            (long)position,
+            status_word,
             (int)mode,
             last_wkc,
             expected_wkc,
-                time_i);
+            position_valid ? "OK" : "STALE",
+            (unsigned long)time_i);
 
         monitor_count++;
 
-        /*
-         * 每5秒额外打印一次稳定性统计。
-         * 500 ms × 10 = 5秒。
-         */
         if (monitor_count >= 10U) {
             monitor_count = 0U;
 
@@ -331,27 +367,17 @@ static void ethercat_monitor_task(
                 "OP statistics: "
                 "cycles=%lu timeout=%lu "
                 "missed=%lu badWKC=%lu ",
-                (unsigned long)
-                s_ecat_cycle_count,
-                (unsigned long)
-                s_ecat_notify_timeout_count,
-                (unsigned long)
-                s_ecat_missed_cycle_count,
-                (unsigned long)
-                s_ecat_bad_wkc_count);
+                (unsigned long)s_ecat_cycle_count,
+                (unsigned long)s_ecat_notify_timeout_count,
+                (unsigned long)s_ecat_missed_cycle_count,
+                (unsigned long)s_ecat_bad_wkc_count);
         }
 
-        /*
-         * 30秒测试结束后只打印一次结果。
-         */
-        if (s_ecat_stable_done &&
-            !final_result_reported) {
+        if (s_ecat_stable_done && !final_result_reported) {
             if (s_ecat_stable_pass) {
-                USR_LOG_INFO(
-                    "30-second stable OP test PASSED");
+                USR_LOG_INFO("30-second stable OP test PASSED");
             } else {
-                USR_LOG_ERROR(
-                    "30-second stable OP test FAILED");
+                USR_LOG_ERROR("30-second stable OP test FAILED");
             }
 
             final_result_reported = 1U;
@@ -359,51 +385,38 @@ static void ethercat_monitor_task(
     }
 }
 
-static void ethercat_safe_op_cycle_forever(
-    int expected_wkc) {
-
+static void ethercat_safe_op_cycle_forever(int expected_wkc) {
     int wkc;
-
-
+    uint32_t gpt_tick_div = 0U;
     TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
 
     s_ecat_expected_wkc = expected_wkc;
-
     s_ecat_cycle_count = 0U;
     s_ecat_notify_timeout_count = 0U;
     s_ecat_missed_cycle_count = 0U;
     s_ecat_bad_wkc_count = 0U;
-
     s_ecat_last_wkc = 0;
+    s_ecat_position_valid = 0U;
     s_ecat_stable_done = 0U;
     s_ecat_stable_pass = 0U;
 
     /*
-     * GPT启动前先立即发送一帧，
-     * 避免OP切换后产生额外空闲间隔。
+     * GPT启动前先立即发送一帧。
      */
+    ethercat_write_safe_pdo_output();
     (void) ec_send_processdata();
-    wkc = ec_receive_processdata(
-        EC_TIMEOUTRET);
+    wkc = ec_receive_processdata(EC_TIMEOUTRET);
+    s_ecat_last_wkc = wkc;
 
-    if (wkc < expected_wkc) {
-        USR_LOG_ERROR(
-            "Initial OP PDO failed: WKC=%d/%d",
-            wkc,
-            expected_wkc);
+    if (wkc >= expected_wkc) {
+        ethercat_publish_valid_pdo_input();
+    } else {
+        s_ecat_bad_wkc_count++;
+        USR_LOG_ERROR("Initial OP PDO failed: WKC=%d/%d", wkc, expected_wkc);
     }
 
+    vTaskPrioritySet(current_task, ETHERCAT_CYCLE_TASK_PRIORITY);
 
-    /*
-     * 在启动GPT之前提升为周期通信优先级。
-     */
-    vTaskPrioritySet(
-        current_task,
-        ETHERCAT_CYCLE_TASK_PRIORITY);
-
-    /*
-     * GPT启动后，本任务不能再执行阻塞日志。
-     */
     if (gpt_init() != FSP_SUCCESS) {
         vTaskDelete(NULL);
     }
@@ -412,15 +425,53 @@ static void ethercat_safe_op_cycle_forever(
 
     for (;;) {
         /*
-         * 正常情况下每4 ms收到一次通知。
-         * 8 ms超时仅用于识别GPT或调度异常。
+         * GPT每2 ms通知一次，只作为FreeRTOS唤醒节拍。
          */
-        xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
-        time_i++;
+        if (xSemaphoreTake(s_gpt_cycle_semaphore,
+                           pdMS_TO_TICKS(ETHERCAT_NOTIFY_TIMEOUT_MS)) != pdTRUE) {
+            s_ecat_notify_timeout_count++;
+            s_ecat_missed_cycle_count++;
+            s_ecat_position_valid = 0U;
+            continue;
+        }
 
+        time_i++; /* 记录2 ms GPT tick */
+
+        /*
+         * DC/SYNC0为4 ms，所以每2次GPT通知才做一次PDO交换。
+         */
+        gpt_tick_div++;
+        if (gpt_tick_div < ETHERCAT_GPT_TICKS_PER_PDO) {
+            continue;
+        }
+        gpt_tick_div = 0U;
+
+        s_ecat_cycle_count++;
+
+        ethercat_write_safe_pdo_output();
 
         (void) ec_send_processdata();
-        ec_receive_processdata(EC_TIMEOUTRET);
+        wkc = ec_receive_processdata(EC_TIMEOUTRET);
+        s_ecat_last_wkc = wkc;
+
+        if (wkc >= expected_wkc) {
+            ethercat_publish_valid_pdo_input();
+        } else {
+            /*
+             * WKC不足代表本周期没有可信的新输入。
+             * 断网后这里会持续增加，监控打印PDO=STALE。
+             */
+            s_ecat_bad_wkc_count++;
+            s_ecat_position_valid = 0U;
+        }
+
+        if ((!s_ecat_stable_done) &&
+            (s_ecat_cycle_count >= ETHERCAT_STABLE_TEST_CYCLES)) {
+            s_ecat_stable_pass =
+                ((s_ecat_bad_wkc_count == 0U) &&
+                 (s_ecat_missed_cycle_count == 0U)) ? 1U : 0U;
+            s_ecat_stable_done = 1U;
+        }
     }
 }
 
