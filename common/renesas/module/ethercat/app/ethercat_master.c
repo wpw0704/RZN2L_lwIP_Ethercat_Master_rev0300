@@ -4,6 +4,7 @@
 #include "ethercat_port_cfg.h"
 #include "FreeRTOS.h"
 #include "ethercat.h"
+#include "semphr.h"
 #include "task.h"
 #include <stdint.h>
 #include "ethercatprint.h"
@@ -128,7 +129,7 @@ static volatile int32_t s_ecat_monitor_position = 0;
 static volatile int8_t s_ecat_monitor_mode = 0;
 static volatile int32_t s_ecat_actual_position = 0;
 static volatile uint8_t s_ecat_position_valid = 0U;
-
+static uint64 time_i = 0;
 static volatile uint8_t s_servo_setup_ok = 0U;
 
 static void ethercat_monitor_task(void *pvParameters);
@@ -309,12 +310,13 @@ static void ethercat_monitor_task(
         USR_LOG_INFO(
             "Servo position: "
             "Pos=%ld counts "
-            "SW=0x%04X Mode=%d WKC=%d/%d",
-            (long)position,
-            status_word,
+            "SW=0x%04X Mode=%d WKC=%d/%d time=%d",
+            (long)sv_in->CurrentPosition,
+            sv_in->StatusWord,
             (int)mode,
             last_wkc,
-            expected_wkc);
+            expected_wkc,
+                time_i);
 
         monitor_count++;
 
@@ -328,7 +330,7 @@ static void ethercat_monitor_task(
             USR_LOG_INFO(
                 "OP statistics: "
                 "cycles=%lu timeout=%lu "
-                "missed=%lu badWKC=%lu",
+                "missed=%lu badWKC=%lu ",
                 (unsigned long)
                 s_ecat_cycle_count,
                 (unsigned long)
@@ -359,8 +361,9 @@ static void ethercat_monitor_task(
 
 static void ethercat_safe_op_cycle_forever(
     int expected_wkc) {
-    uint32_t notify_count;
+
     int wkc;
+
 
     TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
 
@@ -374,23 +377,6 @@ static void ethercat_safe_op_cycle_forever(
     s_ecat_last_wkc = 0;
     s_ecat_stable_done = 0U;
     s_ecat_stable_pass = 0U;
-    /*
-     * 清除该任务之前可能残留的通知。
-     */
-    while (ulTaskNotifyTake(pdTRUE, 0U) != 0U) {
-        /* 清空通知计数 */
-    }
-
-    /*
-     * 保持安全输出：
-     * EtherCAT处于OP，但伺服不使能。
-     */
-    sv_out->ControlWord = 0x0000U;
-    sv_out->OpModeSet = 8;
-    sv_out->TargetVelocity = 0;
-    sv_out->TargetPos =
-            sv_in->CurrentPosition;
-    sv_out->TouchProbe = 0U;
 
     /*
      * GPT启动前先立即发送一帧，
@@ -407,10 +393,6 @@ static void ethercat_safe_op_cycle_forever(
             expected_wkc);
     }
 
-    /*
-     * 设置GPT唤醒目标。
-     */
-    gpt_set_notify_task(current_task);
 
     /*
      * 在启动GPT之前提升为周期通信优先级。
@@ -423,26 +405,7 @@ static void ethercat_safe_op_cycle_forever(
      * GPT启动后，本任务不能再执行阻塞日志。
      */
     if (gpt_init() != FSP_SUCCESS) {
-        /*
-         * 启动失败时仍不能让任务自然返回。
-         * 使用FreeRTOS Tick维持安全PDO通信。
-         */
-        TickType_t fallback_wake =
-                xTaskGetTickCount();
-
-        s_ecat_stable_done = 1U;
-        s_ecat_stable_pass = 0U;
-
-        for (;;) {
-            sv_out->ControlWord = 0x0000U;
-            sv_out->OpModeSet = 8;
-            sv_out->TargetVelocity = 0;
-            sv_out->TargetPos = sv_in->CurrentPosition;
-            sv_out->TouchProbe = 0U;
-            (void) ec_send_processdata();
-            s_ecat_last_wkc = ec_receive_processdata(EC_TIMEOUTRET);
-            vTaskDelayUntil(&fallback_wake, pdMS_TO_TICKS(4U));
-        }
+        vTaskDelete(NULL);
     }
 
     s_ecat_cycle_running = 1U;
@@ -452,67 +415,12 @@ static void ethercat_safe_op_cycle_forever(
          * 正常情况下每4 ms收到一次通知。
          * 8 ms超时仅用于识别GPT或调度异常。
          */
-        notify_count = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(ETHERCAT_NOTIFY_TIMEOUT_MS));
+        xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
+        time_i++;
 
-        if (notify_count == 0U) {
-            s_ecat_notify_timeout_count++;
-        } else if (notify_count > 1U) {
-            /*
-             * 通知计数大于1，表示任务被延迟，
-             * 至少错过了一个4 ms周期点。
-             */
-            s_ecat_missed_cycle_count += notify_count - 1U;
-        }
-        /*
-         * 当前阶段只验证EtherCAT OP稳定。
-         * 不发送伺服使能控制字。
-         */
-        sv_out->ControlWord = 0x0000U;
-        sv_out->OpModeSet = 8;
-        sv_out->TargetVelocity = 0;
-        sv_out->TargetPos = sv_in->CurrentPosition;
-        sv_out->TouchProbe = 0U;
+
         (void) ec_send_processdata();
-        wkc = ec_receive_processdata(EC_TIMEOUTRET);
-        s_ecat_last_wkc = wkc;
-
-        if (wkc >= expected_wkc) {
-            /*
-             * 这里只复制当前位置，不能打印。
-             */
-            s_ecat_monitor_position = sv_in->CurrentPosition;
-            s_ecat_monitor_status_word = sv_in->StatusWord;
-            s_ecat_monitor_mode = sv_in->OpModeNow;
-            s_ecat_position_valid = 1U;
-        } else {
-            s_ecat_bad_wkc_count++;
-        }
-        /*
-         * 更新供低优先级日志任务读取的快照。
-         */
-        s_ecat_monitor_status_word = sv_in->StatusWord;
-        s_ecat_monitor_position = sv_in->CurrentPosition;
-        s_ecat_monitor_mode = sv_in->OpModeNow;
-        s_ecat_cycle_count++;
-
-        /*
-         * 满7500周期后只设置一次最终结果，
-         * 之后仍然永久进行PDO通信。
-         */
-        if ((!s_ecat_stable_done) &&
-            (s_ecat_cycle_count >=
-             ETHERCAT_STABLE_TEST_CYCLES)) {
-            if ((s_ecat_notify_timeout_count == 0U) &&
-                (s_ecat_missed_cycle_count == 0U) &&
-                (s_ecat_bad_wkc_count == 0U) &&
-                (s_ecat_last_wkc >= expected_wkc)) {
-                s_ecat_stable_pass = 1U;
-            } else {
-                s_ecat_stable_pass = 0U;
-            }
-
-            s_ecat_stable_done = 1U;
-        }
+        ec_receive_processdata(EC_TIMEOUTRET);
     }
 }
 
@@ -737,13 +645,13 @@ static void ethercat_master_scan_task(void *pvParameters) {
         vTaskDelete(NULL);
     }
 
-    memset(sv_out, 0, sizeof(*sv_out));
+    // memset(sv_out, 0, sizeof(*sv_out));
 
-    sv_out->ControlWord = 0x0000U;
-    sv_out->TargetPos = 0;
-    sv_out->TargetVelocity = 0;
-    sv_out->OpModeSet = 8;
-    sv_out->TouchProbe = 0;
+    // sv_out->ControlWord = 0x0000U;
+    // sv_out->TargetPos = 0;
+    // sv_out->TargetVelocity = 0;
+    // sv_out->OpModeSet = 8;
+    // sv_out->TouchProbe = 0;
 
     last_wake = xTaskGetTickCount();
 
@@ -792,12 +700,12 @@ static void ethercat_master_scan_task(void *pvParameters) {
                  invalid_count);
     int op_reached = 0;
 
-    /* 保持安全输出 */
-    sv_out->ControlWord = 0x0000U;
-    sv_out->TargetPos = sv_in->CurrentPosition;
-    sv_out->TargetVelocity = 0;
-    sv_out->OpModeSet = 8;
-    sv_out->TouchProbe = 0;
+    // /* 保持安全输出 */
+    // sv_out->ControlWord = 0x0000U;
+    // sv_out->TargetPos = sv_in->CurrentPosition;
+    // sv_out->TargetVelocity = 0;
+    // sv_out->OpModeSet = 8;
+    // sv_out->TouchProbe = 0;
 
     /* 请求所有从站进入 EtherCAT OP */
     ec_slave[0].state = EC_STATE_OPERATIONAL;
@@ -813,10 +721,10 @@ static void ethercat_master_scan_task(void *pvParameters) {
     for (int cycle = 0; cycle < 1250; cycle++) {
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(4));
 
-        /* 进入驱动使能前始终保持当前位置 */
-        sv_out->ControlWord = 0x0000U;
-        sv_out->TargetPos = sv_in->CurrentPosition;
-        sv_out->OpModeSet = 8;
+        // /* 进入驱动使能前始终保持当前位置 */
+        // sv_out->ControlWord = 0x0000U;
+        // sv_out->TargetPos = sv_in->CurrentPosition;
+        // sv_out->OpModeSet = 8;
 
         (void) ec_send_processdata();
         wkc = ec_receive_processdata(EC_TIMEOUTRET);

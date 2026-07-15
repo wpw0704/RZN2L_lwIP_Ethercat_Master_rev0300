@@ -114,7 +114,8 @@ const ioport_pin_cfg_t g_bsp_pin_cfg_data[] =
   { .pin = BSP_IO_PORT_13_PIN_5, .pin_cfg = ((uint32_t) IOPORT_CFG_PORT_DIRECTION_INPUT) },
   { .pin = BSP_IO_PORT_13_PIN_6, .pin_cfg = ((uint32_t) IOPORT_CFG_PORT_DIRECTION_INPUT) },
   { .pin = BSP_IO_PORT_13_PIN_7, .pin_cfg = ((uint32_t) IOPORT_CFG_PORT_DIRECTION_INPUT) },
-  { .pin = BSP_IO_PORT_14_PIN_0, .pin_cfg = ((uint32_t) IOPORT_CFG_PORT_DIRECTION_INPUT) },
+  { .pin = BSP_IO_PORT_14_PIN_0, .pin_cfg = ((uint32_t) IOPORT_CFG_PORT_DIRECTION_OUTPUT
+          | (uint32_t) IOPORT_CFG_PORT_OUTPUT_LOW) },
   { .pin = BSP_IO_PORT_14_PIN_2, .pin_cfg = ((uint32_t) IOPORT_CFG_PORT_PERI
           | (uint32_t) IOPORT_PIN_P142_PFC_01_XSPI0_ECS0) },
   { .pin = BSP_IO_PORT_14_PIN_4, .pin_cfg = ((uint32_t) IOPORT_CFG_DRIVE_HIGH | (uint32_t) IOPORT_CFG_PORT_PERI

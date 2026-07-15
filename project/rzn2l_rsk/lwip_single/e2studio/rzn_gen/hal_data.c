@@ -139,8 +139,8 @@ const gpt_extended_cfg_t g_timer0_extend =
         };
 const timer_cfg_t g_timer0_cfg =
 { .mode = TIMER_MODE_PERIODIC,
-/* Actual period: 0.004 seconds. Actual duty: 50%. */.period_counts = (uint32_t) 0x186a00,
-  .duty_cycle_counts = 0xc3500, .source_div = (timer_source_div_t) 0, .channel = GPT_CHANNEL_UNIT0_0,
+/* Actual period: 0.002 seconds. Actual duty: 50%. */.period_counts = (uint32_t) 0xc3500,
+  .duty_cycle_counts = 0x61a80, .source_div = (timer_source_div_t) 0, .channel = GPT_CHANNEL_UNIT0_0,
 #if (1 == BSP_FEATURE_BSP_IRQ_GPT_SEL_SUPPORTED)
     .p_callback          = NULL,
 #else
@@ -149,13 +149,13 @@ const timer_cfg_t g_timer0_cfg =
   .p_context = NULL,
   .p_extend = &g_timer0_extend,
 #if defined(VECTOR_NUMBER_GPT0_OVF)
-    .cycle_end_ipl       = (12),
+    .cycle_end_ipl       = (10),
     .cycle_end_irq       = VECTOR_NUMBER_GPT0_OVF,
 #elif defined(VECTOR_NUMBER_GPT00_0_INT)
     .cycle_end_ipl       = FSP_NOT_DEFINED,
     .cycle_end_irq       = VECTOR_NUMBER_GPT00_0_INT,
 #else
-  .cycle_end_ipl = (12),
+  .cycle_end_ipl = (10),
   .cycle_end_irq = FSP_INVALID_VECTOR,
 #endif
         };

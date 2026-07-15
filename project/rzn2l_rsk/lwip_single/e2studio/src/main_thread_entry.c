@@ -2,6 +2,7 @@
 #include "um_common.h"
 #include "um_serial_io_api.h"
 #include "ethercat_port_monitor.h"
+#include "gpt.h"
 
 /* Main Thread entry function */
 /* pvParameters contains TaskHandle_t */
@@ -17,7 +18,7 @@ void main_thread_entry(void *pvParameters) {
         }
     }
     USR_LOG_INFO("Started Serial I/O interface.");
-
+    // gpt_init();
 
     /* 当前阶段不运行发包验证函数，只启动 port1 链路稳定监控，为后续 SOEM 扫描从站做准备。 */
     usr_err = ethercat_port_monitor_start();
@@ -30,7 +31,11 @@ void main_thread_entry(void *pvParameters) {
 
     /** TODO: add your own code here */
     while (1) {
+        // xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
+        // static int  i = 0;
+        // R_BSP_PinToggle(BSP_IO_REGION_SAFE,BSP_IO_PORT_14_PIN_0);
         vTaskSuspend(NULL);
+        // USR_LOG_INFO("------------------");
     }
 }
 

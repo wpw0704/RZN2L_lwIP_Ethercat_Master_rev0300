@@ -129,7 +129,7 @@
       <configSetting altId="p13_5.input" configurationId="p13_5"/>
       <configSetting altId="p13_6.input" configurationId="p13_6"/>
       <configSetting altId="p13_7.input" configurationId="p13_7"/>
-      <configSetting altId="p14_0.input" configurationId="p14_0"/>
+      <configSetting altId="p14_0.output.low" configurationId="p14_0"/>
       <configSetting altId="p16_3.input" configurationId="p16_3"/>
       <configSetting altId="p17_3.output.low" configurationId="p17_3"/>
       <configSetting altId="p18_2.output.low" configurationId="p18_2"/>

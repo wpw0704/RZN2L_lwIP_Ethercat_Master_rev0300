@@ -700,7 +700,7 @@ FSP Configuration
       P13_5 M12 GPIO SW3_Pin2 - - "Input mode" - - "ETHER_ESC: ESC_LATCH0; ETHER_ESC: ESC_LATCH1; ETHER_GMAC: GMAC_PTPTRG0; IIC2: IIC_SCL2; MTU3: MTCLKA; SPI1: SPI_RSPCK1; XSPI0: XSPI0_WP1#" - IO - - 
       P13_6 M13 GPIO SW3_Pin1 - - "Input mode" - - "ETHER_ESC: ESC_SYNC0; ETHER_ESC: ESC_SYNC1; ETHER_ETHSW: ETHSW_PTPOUT0; MTU3: MTCLKB; XSPI0: XSPI0_WP0#" - IO - - 
       P13_7 M11 GPIO SW3_Pin4 - - "Input mode" - - "ETHER_ESC: ESC_LATCH0; ETHER_ESC: ESC_LATCH1; ETHER_GMAC: GMAC_PTPTRG1; MBXSEM: MBX_HINT#; MTU3: MTCLKC; XSPI0: XSPI0_ECS1#" - IO - - 
-      P14_0 L13 GPIO SW3_Pin3 - - "Input mode" - - "ETHER_ESC: ESC_SYNC0; ETHER_ESC: ESC_SYNC1; ETHER_ETHSW: ETHSW_PTPOUT1; MTU3: MTCLKD; XSPI0: XSPI0_INT0#" - IO - - 
+      P14_0 L13 GPIO SW3_Pin3 Low - "Output mode (Low & Not Into Input)" - - "ETHER_ESC: ESC_SYNC0; ETHER_ESC: ESC_SYNC1; ETHER_ETHSW: ETHSW_PTPOUT1; MTU3: MTCLKD; XSPI0: XSPI0_INT0#" - IO - - 
       P14_1 L14 - - - - Disabled - - "ETHER_ESC: ESC_LATCH0; ETHER_ESC: ESC_LATCH1; ETHER_ETH1: ETH1_COL; ETHER_GMAC: GMAC_PTPTRG1; GPT8: GTIOC8A; MTU38: MTIOC8A; SHOSTIF: HSPI_IO0; XSPI0: XSPI0_INT1#" - None - - 
       P14_2 K12 XSPI0_XSPI0_ECS0# XSPI0_ECS Low - "Peripheral mode" - - "ETHER_ETH0: ETH0_CRS; ETHER_ETH2: ETH2_CRS; GPT8: GTIOC8B; IRQ: IRQ6; MTU38: MTIOC8B; SHOSTIF: HSPI_CK; XSPI0: XSPI0_ECS0#" - I - - 
       P14_3 M14 - - - - Disabled - - "ETHER_ETH0: ETH0_COL; ETHER_ETH2: ETH2_COL; MTU30: MTIOC0A; SHOSTIF: HSPI_IO1; XSPI0: XSPI0_RSTO1#" - None - - 
@@ -926,7 +926,7 @@ FSP Configuration
       P13_5 M12 - SW3_Pin2 - - Disabled - - "ETHER_ESC: ESC_LATCH0; ETHER_ESC: ESC_LATCH1; ETHER_GMAC: GMAC_PTPTRG0; IIC2: IIC_SCL2; MTU3: MTCLKA; SPI1: SPI_RSPCK1; XSPI0: XSPI0_WP1#" - IO - - 
       P13_6 M13 - SW3_Pin1 - - Disabled - - "ETHER_ESC: ESC_SYNC0; ETHER_ESC: ESC_SYNC1; ETHER_ETHSW: ETHSW_PTPOUT0; MTU3: MTCLKB; XSPI0: XSPI0_WP0#" - IO - - 
       P13_7 M11 - SW3_Pin4 - - Disabled - - "ETHER_ESC: ESC_LATCH0; ETHER_ESC: ESC_LATCH1; ETHER_GMAC: GMAC_PTPTRG1; MBXSEM: MBX_HINT#; MTU3: MTCLKC; XSPI0: XSPI0_ECS1#" - IO - - 
-      P14_0 L13 - SW3_Pin3 - - Disabled - - "ETHER_ESC: ESC_SYNC0; ETHER_ESC: ESC_SYNC1; ETHER_ETHSW: ETHSW_PTPOUT1; MTU3: MTCLKD; XSPI0: XSPI0_INT0#" - IO - - 
+      P14_0 L13 - SW3_Pin3 Low - Disabled - - "ETHER_ESC: ESC_SYNC0; ETHER_ESC: ESC_SYNC1; ETHER_ETHSW: ETHSW_PTPOUT1; MTU3: MTCLKD; XSPI0: XSPI0_INT0#" - IO - - 
       P14_1 L14 - - - - Disabled - - "ETHER_ESC: ESC_LATCH0; ETHER_ESC: ESC_LATCH1; ETHER_ETH1: ETH1_COL; ETHER_GMAC: GMAC_PTPTRG1; GPT8: GTIOC8A; MTU38: MTIOC8A; SHOSTIF: HSPI_IO0; XSPI0: XSPI0_INT1#" - None - - 
       P14_2 K12 - XSPI0_ECS Low - Disabled - - "ETHER_ETH0: ETH0_CRS; ETHER_ETH2: ETH2_CRS; GPT8: GTIOC8B; IRQ: IRQ6; MTU38: MTIOC8B; SHOSTIF: HSPI_CK; XSPI0: XSPI0_ECS0#" - I - - 
       P14_3 M14 - - - - Disabled - - "ETHER_ETH0: ETH0_COL; ETHER_ETH2: ETH2_COL; MTU30: MTIOC0A; SHOSTIF: HSPI_IO1; XSPI0: XSPI0_RSTO1#" - None - - 
@@ -1230,7 +1230,7 @@ FSP Configuration
       General: Unit: 0
       General: Channel: 0
       General: Mode: Periodic
-      General: Period: 4
+      General: Period: 2
       General: Compare Match: Compare Match A: Status: Disabled
       General: Compare Match: Compare Match A: Compare match value: 0
       General: Compare Match: Compare Match B: Status: Disabled
@@ -1262,7 +1262,7 @@ FSP Configuration
       Input: Noise Filter A Sampling Clock Select: No Filter
       Input: Noise Filter B Sampling Clock Select: No Filter
       Interrupts: Callback: gpt0_callback
-      Interrupts: Overflow/Crest Interrupt Priority: Priority 12
+      Interrupts: Overflow/Crest Interrupt Priority: Priority 10
       Interrupts: Capture/Compare match A Interrupt Priority: Disabled
       Interrupts: Capture/Compare match B Interrupt Priority: Disabled
       Interrupts: Underflow/Trough Interrupt Priority: Disabled

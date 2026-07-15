@@ -911,7 +911,7 @@
       <property id="module.driver.gpt.unit" value="0"/>
       <property id="module.driver.gpt.channel" value="0"/>
       <property id="module.driver.timer.mode" value="module.driver.timer.mode.mode_periodic"/>
-      <property id="module.driver.timer.period" value="4"/>
+      <property id="module.driver.timer.period" value="2"/>
       <property id="module.driver.timer.compare_match.a.status" value="module.driver.timer.compare_match.a.status.disabled"/>
       <property id="module.driver.timer.compare_match.a.value" value="0"/>
       <property id="module.driver.timer.compare_match.b.status" value="module.driver.timer.compare_match.b.status.disabled"/>
@@ -943,7 +943,7 @@
       <property id="module.driver.timer.gtioca_filter" value="module.driver.timer.gtioc_filter.gtioc_filter_none"/>
       <property id="module.driver.timer.gtiocb_filter" value="module.driver.timer.gtioc_filter.gtioc_filter_none"/>
       <property id="module.driver.timer.p_callback" value="gpt0_callback"/>
-      <property id="module.driver.timer.ipl" value="board.icu.common.irq.priority12"/>
+      <property id="module.driver.timer.ipl" value="board.icu.common.irq.priority10"/>
       <property id="module.driver.timer.capture_a_ipl" value="_disabled"/>
       <property id="module.driver.timer.capture_b_ipl" value="_disabled"/>
       <property id="module.driver.timer.trough_ipl" value="_disabled"/>
@@ -1439,8 +1439,8 @@
       <configSetting altId="p13_6.gpio_mode.gpio_mode_in" configurationId="p13_6.gpio_mode"/>
       <configSetting altId="p13_7.input" configurationId="p13_7"/>
       <configSetting altId="p13_7.gpio_mode.gpio_mode_in" configurationId="p13_7.gpio_mode"/>
-      <configSetting altId="p14_0.input" configurationId="p14_0"/>
-      <configSetting altId="p14_0.gpio_mode.gpio_mode_in" configurationId="p14_0.gpio_mode"/>
+      <configSetting altId="p14_0.output.low" configurationId="p14_0"/>
+      <configSetting altId="p14_0.gpio_mode.gpio_mode_out.low" configurationId="p14_0.gpio_mode"/>
       <configSetting altId="p14_2.xspi0.xspi0_ecs0_hash" configurationId="p14_2"/>
       <configSetting altId="p14_2.gpio_mode.gpio_mode_peripheral" configurationId="p14_2.gpio_mode"/>
       <configSetting altId="p14_4.xspi0.xspi0_ds" configurationId="p14_4"/>
