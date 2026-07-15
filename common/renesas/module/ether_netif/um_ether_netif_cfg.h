@@ -20,7 +20,7 @@
 /** Specify the task name of the Ethernet receive task.*/
 #define UM_ETHER_NETIF_CFG_READER_TASK_NAME             ("Ethernet Reader Task")
 /** Specify the priority of the Ethernet receive task */
-#define UM_ETHER_NETIF_CFG_READER_TASK_PRIORITY         (4)
+#define UM_ETHER_NETIF_CFG_READER_TASK_PRIORITY         (8)
 /** Specify the stack size for the Ethernet receive task. */
 #define UM_ETHER_NETIF_CFG_READER_TASK_STACK_BYTE_SIZE  (1024)
 /** Specify the task name for the Ethernet status monitoring task.*/
