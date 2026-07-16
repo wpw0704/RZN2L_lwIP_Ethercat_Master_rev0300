@@ -31,16 +31,14 @@ void main_thread_entry(void *pvParameters) {
 
     /** TODO: add your own code here */
     while (1) {
-        // xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
-        // static int  i = 0;
-        // R_BSP_PinToggle(BSP_IO_REGION_SAFE,BSP_IO_PORT_14_PIN_0);
-        // vTaskSuspend(NULL);
-        // USR_LOG_INFO("------------------");
-        USR_LOG_INFO("StatusWord1:%x; TargetPosition:%ld, CurrentPosition1:%ld\r\n",
-                     input1s->StatusWord, output1s->TargetPos,
-                     input1s->CurrentPosition);
-        //   USR_LOG_INFO("t=%d,r=%ld,r=%ld,r=%ld\n",count,reft,reft1,ref_delta);
-        // USR_LOG_INFO("t=%d,r=%ld\n", count, reft);
+        if ((input1s != NULL) && (output1s != NULL)) {
+            USR_LOG_INFO("StatusWord1:%x; TargetPosition:%ld, CurrentPosition1:%ld\r\n",
+                         input1s->StatusWord,
+                         output1s->TargetPos,
+                         input1s->CurrentPosition);
+        } else {
+            USR_LOG_INFO("EtherCAT PDO not ready yet.\r\n");
+        }
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }

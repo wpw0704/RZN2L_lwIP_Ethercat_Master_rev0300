@@ -101,7 +101,7 @@ void ecat_init(void) {
      * ec_init() 会调用本工程的 nicdrv/oshw 适配层，把 SOEM 主站绑定到 EtherCAT 网口。
      */
     /* initialise SOEM, bind socket to ifname */
-    if (ec_init("eth1")) {
+    if (ec_init(ETHERCAT_MASTER_IFNAME)) {
         USR_LOG_INFO("ec_init succeeded.");
         /*
          * 第 2 步：扫描并初始化 EtherCAT 从站。
@@ -130,7 +130,7 @@ void ecat_init(void) {
              */
             ec_configdc();
             // for (slc = 1; slc <= ec_slavecount; slc++)
-            ec_dcsync0(1,TRUE,ETHERCAT_DC_SYNC0_CYCLE_NS,0);
+            ec_dcsync0(1,TRUE,ETHERCAT_DC_SYNC0_CYCLE_NS, 0);
             /*
              * 第 5 步：建立 PDO 过程数据映射。
              * ec_config_map() 会生成 IOmap，并把 ec_slave[x].outputs / inputs 指向对应 PDO 区域。
@@ -170,14 +170,37 @@ void ecat_init(void) {
              */
             ec_writestate(0);
             R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
+#if 0
             /* wait for all slaves to reach OP state */
+            // do {
+            //     for (slc = 0; slc <= ec_slavecount; slc++) {
+            //         ec_slave[slc].state = EC_STATE_OPERATIONAL;
+            //         ec_writestate(slc);
+            //         printf("Slave %d State=0x%04x\r\n", slc, ec_slave[slc].state);
+            //     }
+            // } while ((ec_slave[0].state != EC_STATE_OPERATIONAL) || (ec_slave[1].state != EC_STATE_OPERATIONAL));
+#endif
+            int chk = 200;
+            /* request OP state for all slaves */
+            ec_slave[0].state = EC_STATE_OPERATIONAL;
+            /* send one valid process data before requesting OP */
+            ec_send_processdata();                 // 先发一帧有效 PDO 输出
+            ec_receive_processdata(EC_TIMEOUTRET); // 收一帧 PDO 输入，更新输入数据
+            ec_writestate(0);                      // 请求所有从站切换到目标状态
+            /* wait for all slaves to actually reach OP */
             do {
-                for (slc = 0; slc <= ec_slavecount; slc++) {
-                    ec_slave[slc].state = EC_STATE_OPERATIONAL;
-                    ec_writestate(slc);
-                    printf("Slave %d State=0x%04x\r\n", slc, ec_slave[slc].state);
-                }
-            } while ((ec_slave[0].state != EC_STATE_OPERATIONAL) || (ec_slave[1].state != EC_STATE_OPERATIONAL));
+                ec_send_processdata();
+                ec_receive_processdata(EC_TIMEOUTRET);
+                ec_statecheck(0, EC_STATE_OPERATIONAL, 2000);
+            } while ((chk-- > 0) && (ec_slave[0].state != EC_STATE_OPERATIONAL));
+            ec_readstate();
+            for (slc = 1; slc <= ec_slavecount; slc++) {
+                printf("Slave %d State=0x%04x ALstatuscode=0x%04x\r\n",
+                       slc,
+                       ec_slave[slc].state,
+                       ec_slave[slc].ALstatuscode);
+            }
+
             R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
             if (ec_slave[0].state == EC_STATE_OPERATIONAL) {
                 /*
@@ -238,7 +261,6 @@ usr_err_t ethercat_master_scan_start(void) {
 }
 
 
-
 static void ethercat_master_scan_task(void *pvParameters) {
     (void) pvParameters;
     USR_LOG_INFO("SOEM master start on %s.", ETHERCAT_MASTER_IFNAME);
@@ -254,5 +276,3 @@ static void ethercat_master_scan_task(void *pvParameters) {
         ec_receive_processdata(EC_TIMEOUTRET);
     }
 }
-
-
