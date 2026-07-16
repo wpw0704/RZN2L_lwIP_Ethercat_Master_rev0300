@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include "ethercatprint.h"
 #include "gpt.h"
+#include "ethercat_motion.h"
 
 /* CiA402 控制字 0x6040，主站通过 RxPDO 写给驱动器 */
 #define CIA402_CW_DISABLE_VOLTAGE       (0x0000U)  // 关闭电压/释放使能

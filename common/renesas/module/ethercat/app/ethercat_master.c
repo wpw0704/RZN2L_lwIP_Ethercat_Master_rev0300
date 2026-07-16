@@ -8,6 +8,10 @@
 #define ETHERCAT_PDO_MONITOR_LOG_PERIOD (500U)
 #define ETHERCAT_PDO_STALE_WARN_CYCLES  (1000U)
 
+
+#define CSP_COUNTS_PER_REV              (262144L)
+#define CSP_TEST_STEP_COUNTS            (64L)
+
 /*
  * 扫描、SDO和状态配置阶段使用的优先级。
  */
@@ -18,6 +22,20 @@
 #define ETHERCAT_MASTER_TASK_PRIORITY (7U)
 
 #define ETHERCAT_DC_SYNC0_CYCLE_NS      (2000000U)
+
+
+typedef enum {
+    CSP_TEST_IDLE = 0,
+    CSP_TEST_FORWARD,
+    CSP_TEST_BACKWARD,
+    CSP_TEST_DONE,
+} csp_test_state_t;
+
+static csp_test_state_t s_csp_test_state = CSP_TEST_IDLE;
+static int32 s_csp_start_pos = 0;
+static int32 s_csp_target_pos = 0;
+
+static int ethercat_csp_one_rev_test_process(void);
 
 /* SOEM 过程数据映射区，ec_config_map() 会把 PDO 输入输出映射到这里 */
 static char IOmap[4096];
@@ -270,6 +288,14 @@ void ecat_init(void) {
                             NULL,
                             tskIDLE_PRIORITY + 1U,
                             NULL);
+                /* 设置机械参数：电机一圈 262144 counts，导程 50mm，直连 */
+                ethercat_csp_mech_param_set(262144.0f, 50.0f, 1.0f);
+
+                /* 把当前位置设置为软件零点 */
+                ethercat_csp_zero_set_current();
+
+                /* 运动到软件零点 + 50mm，速度 0.02m/s，加速度 0.10m/s^2 */
+                ethercat_csp_move_abs_start_mm(50.0f, 0.02f, 0.10f);
 
                 USR_LOG_INFO("all slaves reached operational state.");
             } else {
@@ -322,13 +348,26 @@ static void ethercat_master_scan_task(void *pvParameters) {
     ecat_init();
 
     for (;;) {
+
         xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
 
+        /* 1. 发送上一周期已经准备好的目标值 */
         (void) ec_send_processdata();
+
+        /* 2. 接收本周期反馈 */
         int wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
+        /* 3. 检查 PDO 状态，只做简单统计 */
         (void) ethercat_master_pdo_process_check(wkc);
-        (void) ethercat_servo_enable_process(0);
+
+        /* 4. 伺服使能状态机，只写 ControlWord */
+        if (ethercat_servo_enable_process(0) == 1) {
+            /*
+             * 5. 计算下一周期 TargetPos
+             * 注意：这里算出的 TargetPos 会在下一次 ec_send_processdata() 发出去。
+             */
+            ethercat_csp_motion_process();
+        }
     }
 }
 
@@ -608,4 +647,89 @@ int ethercat_master_pdo_process_check(int wkc) {
     // }
 
     return pdo_ok;
+}
+
+/*
+ * CSP 正反一圈测试：
+ * - 第一次进入时记录当前位置
+ * - 正转 1 圈
+ * - 再反转回起点
+ * - 全程只更新 TargetPos，不阻塞、不打印
+ *
+ * 返回值：
+ *  0 = 正在运行
+ *  1 = 测试完成
+ * -1 = PDO 未准备好或未使能
+ */
+static int ethercat_csp_one_rev_test_process(void) {
+    int32 forward_target;
+
+    if ((input1s == NULL) || (output1s == NULL)) {
+        return -1;
+    }
+
+    /* 必须已经 Operation Enabled */
+    if ((input1s->StatusWord & CIA402_SW_MASK) != CIA402_SW_OPERATION_ENABLED) {
+        return -1;
+    }
+
+    /* 必须处于 CSP 模式，0x6061 = 8 */
+    if (input1s->OpModeNow != 8) {
+        output1s->OpModeSet = 8;
+        output1s->TargetPos = input1s->CurrentPosition;
+        return -1;
+    }
+
+    switch (s_csp_test_state) {
+        case CSP_TEST_IDLE:
+            s_csp_start_pos = input1s->CurrentPosition;
+            s_csp_target_pos = s_csp_start_pos;
+
+            output1s->OpModeSet = 8;
+            output1s->TargetVelocity = 0;
+            output1s->TargetPos = s_csp_target_pos;
+
+            s_csp_test_state = CSP_TEST_FORWARD;
+            break;
+
+        case CSP_TEST_FORWARD:
+            forward_target = s_csp_start_pos + CSP_COUNTS_PER_REV;
+
+            if (s_csp_target_pos < forward_target) {
+                s_csp_target_pos += CSP_TEST_STEP_COUNTS;
+
+                if (s_csp_target_pos > forward_target) {
+                    s_csp_target_pos = forward_target;
+                }
+            } else {
+                s_csp_test_state = CSP_TEST_BACKWARD;
+            }
+
+            output1s->TargetPos = s_csp_target_pos;
+            break;
+
+        case CSP_TEST_BACKWARD:
+            if (s_csp_target_pos > s_csp_start_pos) {
+                s_csp_target_pos -= CSP_TEST_STEP_COUNTS;
+
+                if (s_csp_target_pos < s_csp_start_pos) {
+                    s_csp_target_pos = s_csp_start_pos;
+                }
+            } else {
+                s_csp_test_state = CSP_TEST_DONE;
+            }
+
+            output1s->TargetPos = s_csp_target_pos;
+            break;
+
+        case CSP_TEST_DONE:
+            output1s->TargetPos = s_csp_start_pos;
+            return 1;
+
+        default:
+            s_csp_test_state = CSP_TEST_IDLE;
+            break;
+    }
+
+    return 0;
 }
