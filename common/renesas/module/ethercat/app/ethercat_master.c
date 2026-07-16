@@ -17,19 +17,22 @@
 #define ETHERCAT_MASTER_TASK_PRIORITY (7U)
 
 #define ETHERCAT_DC_SYNC0_CYCLE_NS      (2000000U)
-/* IOmap buffer for EtherCAT process data */
-static char IOmap[4096];
-#pragma pack(push, 1)
 
-#pragma pack(pop)
+/* SOEM 过程数据映射区，ec_config_map() 会把 PDO 输入输出映射到这里 */
+static char IOmap[4096];
+
+/* 指向 1 号从站 PDO 输出/输入区，进入 OP 后由 ec_slave[slc].outputs/inputs 赋值 */
 PDO_Output *output1s;
 PDO_Input *input1s;
 
+/* PDO 监控缓存，由 2ms PDO 周期任务更新，由低优先级日志任务读取 */
 static ethercat_pdo_monitor_t s_pdo_monitor;
 
+/* WKC 统计：expected 是理论期望值，last 是最近一次 PDO 返回值 */
 static int s_expected_wkc;
 static int s_last_wkc;
 
+/* CiA402 使能状态机当前阶段和等待计数 */
 static servo_enable_state_t s_enable_state = SERVO_ENABLE_IDLE;
 static uint32_t s_enable_wait_count = 0U;
 
@@ -44,6 +47,11 @@ static int ethercat_master_pdo_process_check(int wkc);
 // 伺服使能
 static int ethercat_servo_enable_process(int8 op_mode);
 
+/*
+ * SDO 写封装函数。
+ * 用于在 PRE-OP 到 SAFE-OP 阶段配置 PDO 映射对象，例如 0x1600、0x1A00、0x1C12、0x1C13。
+ * 注意：SDO 是邮箱通信，不能放在 2ms PDO 周期任务中频繁调用。
+ */
 int write8(uint16 slave, uint16 index, uint8 subindex, int value) {
     uint8 temp = value;
 
@@ -190,6 +198,10 @@ void ecat_init(void) {
              */
             ec_writestate(0);
             R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
+            /*
+            * 请求进入 OP 后，持续交换 PDO，并用 ec_readstate() 读取真实状态。
+            * 不使用长时间阻塞的 ec_statecheck(..., 5000)，避免 SV630 因 PDO/SYNC 更新超时触发 E08.6。
+            */
 #if 1
             int chk = 200;
 
@@ -301,17 +313,17 @@ static void ethercat_master_scan_task(void *pvParameters) {
     ecat_init();
 
     for (;;) {
-        /*
-         * 正常情况下每4 ms收到一次通知。
-         */
+        /* GPT 每个 PDO 周期释放一次信号量，本任务按该节拍执行一次 PDO 收发 */
         xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
 
+        /* 先发送上一周期准备好的 RxPDO，再接收从站 TxPDO，并记录 WKC */
         (void) ec_send_processdata();
         int wkc = ec_receive_processdata(EC_TIMEOUTRET);
-        // ec_receive_processdata(EC_TIMEOUTRET);
+
+        /* 只做快速统计和数据缓存，不在 PDO 周期里打印日志 */
         (void) ethercat_master_pdo_process_check(wkc);
 
-        /* CSP 模式传 8。如果你暂时不想改运行模式，可以传 0。 */
+        /* CiA402 使能状态机。参数 0 表示不主动改 0x6060 模式，只执行使能流程 */
         (void) ethercat_servo_enable_process(0);
     }
 }
@@ -335,8 +347,8 @@ static int ethercat_servo_enable_process(int8 op_mode) {
     status_state = status_word & CIA402_SW_MASK;
 
     /*
-     * CSP 模式下，使能前先把目标位置对齐到当前位置，
-     * 避免 target=0 和当前位置差太大导致驱动器报警。
+     * op_mode = 0：不修改 0x6060，保持驱动器当前/默认模式。
+     * op_mode = 8：设置 CSP，并在使能前把 TargetPos 对齐到 CurrentPosition，避免目标跳变报警。
      */
     if (op_mode == 8) {
         output1s->TargetPos = input1s->CurrentPosition;
@@ -440,6 +452,10 @@ static int ethercat_servo_enable_process(int8 op_mode) {
 
 
 /************************** 任务日志 **************************/
+/*
+ * 低优先级 PDO 监控日志任务。
+ * 该任务每 1 秒打印一次缓存数据，不直接调用 SOEM 收发函数，避免影响 PDO 实时周期。
+ */
 static void ethercat_pdo_monitor_log_task(void *pvParameters) {
     ethercat_pdo_monitor_t mon;
 

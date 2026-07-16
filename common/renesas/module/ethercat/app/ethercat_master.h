@@ -12,52 +12,52 @@
 #include "ethercatprint.h"
 #include "gpt.h"
 
-#define CIA402_CW_DISABLE_VOLTAGE       (0x0000U)
-#define CIA402_CW_SHUTDOWN              (0x0006U)
-#define CIA402_CW_SWITCH_ON             (0x0007U)
-#define CIA402_CW_ENABLE_OPERATION      (0x000FU)
-#define CIA402_CW_FAULT_RESET           (0x0080U)
+/* CiA402 控制字 0x6040，主站通过 RxPDO 写给驱动器 */
+#define CIA402_CW_DISABLE_VOLTAGE       (0x0000U)  // 关闭电压/释放使能
+#define CIA402_CW_SHUTDOWN              (0x0006U)  // Shutdown，进入 Ready to switch on
+#define CIA402_CW_SWITCH_ON             (0x0007U)  // Switch on，进入 Switched on
+#define CIA402_CW_ENABLE_OPERATION      (0x000FU)  // Enable operation，进入运行使能
+#define CIA402_CW_FAULT_RESET           (0x0080U)  // 故障复位脉冲
 
-#define CIA402_SW_MASK                  (0x006FU)
-#define CIA402_SW_FAULT_MASK            (0x004FU)
-#define CIA402_SW_FAULT                 (0x0008U)
-#define CIA402_SW_SWITCH_ON_DISABLED    (0x0040U)
-#define CIA402_SW_READY_TO_SWITCH_ON    (0x0021U)
-#define CIA402_SW_SWITCHED_ON           (0x0023U)
-#define CIA402_SW_OPERATION_ENABLED     (0x0027U)
+/* CiA402 状态字 0x6041 判断掩码，用于识别驱动器状态机阶段 */
+#define CIA402_SW_MASK                  (0x006FU)  // 提取 CiA402 状态机低位状态
+#define CIA402_SW_FAULT_MASK            (0x004FU)  // 判断 Fault 状态使用的掩码
+#define CIA402_SW_FAULT                 (0x0008U)  // Fault 故障状态
+#define CIA402_SW_SWITCH_ON_DISABLED    (0x0040U)  // Switch on disabled
+#define CIA402_SW_READY_TO_SWITCH_ON    (0x0021U)  // Ready to switch on
+#define CIA402_SW_SWITCHED_ON           (0x0023U)  // Switched on
+#define CIA402_SW_OPERATION_ENABLED     (0x0027U)  // Operation enabled
 
 typedef enum {
-    SERVO_ENABLE_IDLE = 0,
-    SERVO_ENABLE_FAULT_RESET_PULSE,
-    SERVO_ENABLE_WAIT_FAULT_CLEAR,
-    SERVO_ENABLE_SHUTDOWN,
-    SERVO_ENABLE_SWITCH_ON,
-    SERVO_ENABLE_ENABLE_OPERATION,
-    SERVO_ENABLE_DONE,
-    SERVO_ENABLE_FAILED,
+    SERVO_ENABLE_IDLE = 0,              // 初始状态，根据状态字决定走故障复位还是正常使能
+    SERVO_ENABLE_FAULT_RESET_PULSE,     // 输出一次 0x0080 故障复位脉冲
+    SERVO_ENABLE_WAIT_FAULT_CLEAR,      // 释放 0x0080，等待驱动器故障位清除
+    SERVO_ENABLE_SHUTDOWN,              // 输出 0x0006，等待 Ready to switch on
+    SERVO_ENABLE_SWITCH_ON,             // 输出 0x0007，等待 Switched on
+    SERVO_ENABLE_ENABLE_OPERATION,      // 输出 0x000F，等待 Operation enabled
+    SERVO_ENABLE_DONE,                  // 已使能，持续保持 0x000F
+    SERVO_ENABLE_FAILED,                // 使能超时或失败
 } servo_enable_state_t;
 
 PACKED_BEGIN
 typedef struct PACKED {
-    uint16 ControlWord;
-    int32 TargetPos;
-    int32 TargetVelocity;
-    int8 OpModeSet;
-    uint16 TouchProbe;
-    //		int8 temp;
+    uint16 ControlWord;      // 0x6040 控制字
+    int32 TargetPos;         // 0x607A 目标位置
+    int32 TargetVelocity;    // 0x60FF 目标速度
+    int8 OpModeSet;          // 0x6060 模式设置，8 表示 CSP
+    uint16 TouchProbe;       // 0x60B8 探针控制
 } PDO_Output;
 
 PACKED_END
 
 PACKED_BEGIN
 typedef struct PACKED {
-    uint16 StatusWord;
-    int32 CurrentPosition;
-    int8 OpModeNow;
-    uint16 TouchProbeStatus;
-    int32 TouchProbePos1;
-    uint32 Digitalinputs;
-    //		int8 temp;
+    uint16 StatusWord;       // 0x6041 状态字
+    int32 CurrentPosition;   // 0x6064 当前位置
+    int8 OpModeNow;          // 0x6061 当前实际模式显示
+    uint16 TouchProbeStatus; // 0x60B9 探针状态
+    int32 TouchProbePos1;    // 0x60BA 探针位置 1
+    uint32 Digitalinputs;    // 0x60FD 数字输入
 } PDO_Input;
 
 PACKED_END

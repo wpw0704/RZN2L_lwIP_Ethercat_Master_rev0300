@@ -25,6 +25,12 @@ usr_err_t ethercat_app_common_open(void)
     g_ethercat_app_notify.master_scan_state = ETHERCAT_MASTER_SCAN_STATE_IDLE;
     g_ethercat_app_notify.master_scan_slave_count = 0;
     g_ethercat_app_common_opened = true;
+    g_ethercat_app_notify.master_run_state = ETHERCAT_MASTER_RUN_STATE_IDLE;
+    g_ethercat_app_notify.master_last_wkc = 0;
+    g_ethercat_app_notify.master_expected_wkc = 0;
+    g_ethercat_app_notify.master_al_state = 0;
+    g_ethercat_app_notify.servo_status_word = 0;
+    g_ethercat_app_notify.servo_control_word = 0;
 
     return USR_SUCCESS;
 }
@@ -58,4 +64,27 @@ void ethercat_app_master_scan_set_state(ethercat_master_scan_state_t state, int 
     {
         (void) xSemaphoreGive(g_ethercat_app_notify.master_scan_done_sem);
     }
+}
+
+void ethercat_app_master_run_set_state(ethercat_master_run_state_t state)
+{
+    g_ethercat_app_notify.master_run_state = state;
+}
+
+ethercat_master_run_state_t ethercat_app_master_run_get_state(void)
+{
+    return g_ethercat_app_notify.master_run_state;
+}
+
+void ethercat_app_master_status_update(int last_wkc,
+                                       int expected_wkc,
+                                       uint16_t al_state,
+                                       uint16_t status_word,
+                                       uint16_t control_word)
+{
+    g_ethercat_app_notify.master_last_wkc = last_wkc;
+    g_ethercat_app_notify.master_expected_wkc = expected_wkc;
+    g_ethercat_app_notify.master_al_state = al_state;
+    g_ethercat_app_notify.servo_status_word = status_word;
+    g_ethercat_app_notify.servo_control_word = control_word;
 }
