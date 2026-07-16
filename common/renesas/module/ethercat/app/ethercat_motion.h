@@ -79,6 +79,23 @@ typedef struct {
 #define CSP_MAX_VELOCITY_MPS          (100.0f)
 #define CSP_MAX_ACCEL_MPS2            (50.0f)
 
+typedef enum {
+    CSP_RECIP_ONCE = 0,       /* 只往返一次 */
+    CSP_RECIP_CONTINUOUS,     /* 持续往返，等待停止命令 */
+} csp_recip_mode_t;
+
+/* 以当前位置为起点启动往返运动 */
+int ethercat_csp_recip_start_mm(
+    float stroke_mm,
+    float velocity_mps,
+    float accel_mps2,
+    uint32_t start_dwell_ms,
+    uint32_t end_dwell_ms,
+    csp_recip_mode_t mode);
+
+/* 请求在返回起点后停止 */
+void ethercat_csp_recip_stop(void);
+
 // 设置运动模式
 void ethercat_csp_motion_mode_set(csp_motion_mode_t mode);
 

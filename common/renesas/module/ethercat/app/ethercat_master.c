@@ -368,7 +368,6 @@ static void ethercat_master_scan_task(void *pvParameters) {
              */
             ethercat_csp_local_test_process();
             ethercat_csp_motion_process();
-            // ethercat_csp_one_rev_test_process();
         }
     }
 }
@@ -758,8 +757,7 @@ static int ethercat_csp_one_rev_test_process(void) {
  * 本地单次运动测试。
  * 驱动器稳定使能1秒后，自动执行一次1mm绝对位置运动。
  */
-static void ethercat_csp_local_test_process(void)
-{
+static void ethercat_csp_local_test_process(void) {
 #if CSP_LOCAL_TEST_ENABLE
     static uint32_t stable_cycles = 0U;
     static uint8_t command_sent = 0U;
@@ -776,7 +774,7 @@ static void ethercat_csp_local_test_process(void)
         (input1s->OpModeNow != 8)) {
         stable_cycles = 0U;
         return;
-        }
+    }
 
     /* 检查目标位置与实际位置是否已经基本一致 */
     position_error = output1s->TargetPos - input1s->CurrentPosition;
@@ -790,19 +788,43 @@ static void ethercat_csp_local_test_process(void)
         return;
     }
 
-    /* 连续稳定1秒后才下发测试运动 */
+    // /* 连续稳定1秒后才下发测试运动 */
+    // if (++stable_cycles >= CSP_LOCAL_TEST_WAIT_CYCLES) {
+    //
+    //     /*
+    //      * 向正方向移动1mm：
+    //      * 位置：1mm
+    //      * 速度：0.002m/s，即2mm/s
+    //      * 加速度：0.02m/s²
+    //      */
+    //     // ethercat_csp_move_abs_start_mm(250.0f, 1.0f, 0.1f);
+    //     ethercat_csp_move_rel_start_mm(-250.0f, 1.0f, 0.1f);
+    //
+    //     command_sent = 1U;
+    // }
+
     if (++stable_cycles >= CSP_LOCAL_TEST_WAIT_CYCLES) {
+        /*
+         * 本地往返测试：
+         * 以当前实际位置作为起点；
+         * 正向移动1mm，然后返回起点；
+         * 只执行一次完整往返。
+         */
+        int result = ethercat_csp_recip_start_mm(
+            500.0f, /* 当前位置与正方向5mm之间往返 */
+            1.0f, /* 最大速度2mm/s */
+            0.1f, /* 加速度20mm/s² */
+            1000U, /* 返回起点后停留1000ms */
+            200U, /* 到达终点后停留200ms */
+            CSP_RECIP_CONTINUOUS);
 
         /*
-         * 向正方向移动1mm：
-         * 位置：1mm
-         * 速度：0.002m/s，即2mm/s
-         * 加速度：0.02m/s²
+         * 只有命令提交成功才禁止再次提交。
+         * 如果提交失败，下一周期可以继续尝试。
          */
-        // ethercat_csp_move_abs_start_mm(250.0f, 1.0f, 0.1f);
-        ethercat_csp_move_rel_start_mm(-250.0f, 1.0f, 0.1f);
-
-        command_sent = 1U;
+        if (result == 0) {
+            command_sent = 1U;
+        }
     }
 #endif
 }

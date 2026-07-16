@@ -12,6 +12,29 @@ static csp_motion_ctrl_t s_csp_motion_ctrl = {
     .zero_pos = 0,
 };
 
+/*
+ * 往返运动只是对绝对位置运动的简单组合，
+ * 不单独实现轨迹和加减速算法。
+ */
+typedef struct {
+    uint8_t active; /* 往返功能正在运行 */
+    uint8_t command_running; /* 当前单程命令已经下发 */
+    uint8_t moving_to_start; /* 1=返回起点，0=前往终点 */
+    uint8_t stop_requested; /* 连续模式停止请求 */
+
+    csp_recip_mode_t mode;
+
+    float start_mm; /* 启动时的绝对位置 */
+    float end_mm; /* 起点加行程后的绝对位置 */
+    float velocity_mps;
+    float accel_mps2;
+    uint32_t start_dwell_cycles; /* 初始位置停留周期数 */
+    uint32_t end_dwell_cycles; /* 行程终点停留周期数 */
+    uint32_t wait_counter; /* 当前剩余等待周期数 */
+} csp_recip_ctrl_t;
+
+static csp_recip_ctrl_t s_csp_recip_ctrl;
+
 void ethercat_csp_motion_mode_set(csp_motion_mode_t mode) {
     s_csp_motion_ctrl.mode = mode;
     s_csp_motion_ctrl.enable = 1;
@@ -31,13 +54,19 @@ static csp_mech_param_t s_csp_mech_param = {
 
 static csp_traj_t s_csp_traj;
 static csp_position_command_t s_csp_position_command;
+
 static int csp_traj_process(csp_traj_t *traj);
+
 static void csp_traj_start(csp_traj_t *traj,
                            int32 start_pos,
                            int32 target_pos,
                            float max_velocity_counts_s,
                            float accel_counts_s2);
+
 static void csp_motion_position_process(void);
+
+static void csp_recip_process(void);
+
 /*
  * 获取 1mm 对应多少 counts。
  *
@@ -65,33 +94,37 @@ static float csp_mps2_to_counts_s2(float mps2) {
     return mps2 * 1000.0f * csp_counts_per_mm_get();
 }
 
+/* 编码器绝对位置转换为机械绝对毫米位置 */
+static float csp_counts_to_mm(int32 counts) {
+    return (float) counts / csp_counts_per_mm_get();
+}
+
 static int csp_position_move_submit(csp_position_type_t type,
                                     float position_mm,
                                     float velocity_mps,
-                                    float accel_mps2)
-{
+                                    float accel_mps2) {
     if ((velocity_mps <= 0.0f) ||
         (velocity_mps > CSP_MAX_VELOCITY_MPS)) {
         return -1;
-        }
+    }
 
     if ((accel_mps2 <= 0.0f) ||
         (accel_mps2 > CSP_MAX_ACCEL_MPS2)) {
         return -2;
-        }
+    }
 
     /* 绝对位置必须位于机械有效行程内 */
     if ((type == CSP_POSITION_ABSOLUTE) &&
         ((position_mm < 0.0f) ||
          (position_mm > CSP_MACHINE_MAX_POSITION_MM))) {
         return -3;
-         }
+    }
 
     /* 当前运动未结束时拒绝新命令 */
     if (s_csp_position_command.pending ||
         s_csp_position_command.active) {
         return -4;
-        }
+    }
 
     taskENTER_CRITICAL();
     s_csp_position_command.type = type;
@@ -107,8 +140,7 @@ static int csp_position_move_submit(csp_position_type_t type,
 
 int ethercat_csp_move_abs_start_mm(float target_mm,
                                    float velocity_mps,
-                                   float accel_mps2)
-{
+                                   float accel_mps2) {
     return csp_position_move_submit(CSP_POSITION_ABSOLUTE,
                                     target_mm,
                                     velocity_mps,
@@ -117,12 +149,110 @@ int ethercat_csp_move_abs_start_mm(float target_mm,
 
 int ethercat_csp_move_rel_start_mm(float delta_mm,
                                    float velocity_mps,
-                                   float accel_mps2)
-{
+                                   float accel_mps2) {
     return csp_position_move_submit(CSP_POSITION_RELATIVE,
                                     delta_mm,
                                     velocity_mps,
                                     accel_mps2);
+}
+
+/*
+ * start_dwell_ms：返回最初起点后的停留时间。
+ * end_dwell_ms：到达相对行程终点后的停留时间。
+ */
+int ethercat_csp_recip_start_mm(
+    float stroke_mm,
+    float velocity_mps,
+    float accel_mps2,
+    uint32_t start_dwell_ms,
+    uint32_t end_dwell_ms,
+    csp_recip_mode_t mode) {
+    int32 current_counts;
+    float start_mm;
+    float end_mm;
+
+    if ((input1s == NULL) || (output1s == NULL)) {
+        return -1;
+    }
+
+    if ((mode != CSP_RECIP_ONCE) &&
+        (mode != CSP_RECIP_CONTINUOUS)) {
+        return -2;
+    }
+
+    if (csp_mm_to_counts(stroke_mm) == 0) {
+        return -3;
+    }
+
+    if ((velocity_mps <= 0.0f) ||
+        (velocity_mps > CSP_MAX_VELOCITY_MPS) ||
+        (accel_mps2 <= 0.0f) ||
+        (accel_mps2 > CSP_MAX_ACCEL_MPS2)) {
+        return -4;
+    }
+
+    /* 当前有其他位置运动时，不启动往返 */
+    if (s_csp_position_command.pending ||
+        s_csp_position_command.active ||
+        s_csp_recip_ctrl.active) {
+        return -5;
+    }
+
+    /* 记录命令开始时的位置，后续始终返回这个固定起点 */
+    current_counts = input1s->CurrentPosition;
+    start_mm = csp_counts_to_mm(current_counts);
+    end_mm = start_mm + stroke_mm;
+
+    /* 终点必须处于机械绝对行程内 */
+    if ((end_mm < 0.0f) ||
+        (end_mm > CSP_MACHINE_MAX_POSITION_MM)) {
+        return -6;
+    }
+
+    /* 保存往返的起点、终点和运动参数 */
+    s_csp_recip_ctrl.start_mm = start_mm;
+    s_csp_recip_ctrl.end_mm = end_mm;
+    s_csp_recip_ctrl.velocity_mps = velocity_mps;
+    s_csp_recip_ctrl.accel_mps2 = accel_mps2;
+    s_csp_recip_ctrl.mode = mode;
+
+    /*
+     * 当前PDO周期为2ms。
+     *
+     * 例如：
+     * 1000ms / 2ms = 500个PDO周期；
+     * 500ms / 2ms = 250个PDO周期。
+     *
+     * 加1后再除以2，用于对奇数毫秒进行向上取整。
+     */
+    s_csp_recip_ctrl.start_dwell_cycles =
+            (start_dwell_ms + 1U) / 2U;
+
+    s_csp_recip_ctrl.end_dwell_cycles =
+            (end_dwell_ms + 1U) / 2U;
+
+    /* 新运动开始时还没有进入停留阶段 */
+    s_csp_recip_ctrl.wait_counter = 0U;
+
+    /* 初始化往返运行状态 */
+    s_csp_recip_ctrl.active = 1U;
+    s_csp_recip_ctrl.command_running = 0U;
+
+    /*
+     * moving_to_start=0表示第一段先从当前位置运动到终点。
+     */
+    s_csp_recip_ctrl.moving_to_start = 0U;
+    s_csp_recip_ctrl.stop_requested = 0U;
+
+    return 0;
+}
+
+void ethercat_csp_recip_stop(void) {
+    /*
+     * 不立即中断当前轨迹。
+     * 电机运动回最初起点后再结束往返。
+     */
+    s_csp_recip_ctrl.stop_requested = 1U;
 }
 
 /*
@@ -166,7 +296,8 @@ void ethercat_csp_motion_process(void) {
         // output1s->TargetPos = input1s->CurrentPosition;
         return;
     }
-
+    /* 往返开启后，负责下发下一段绝对位置命令 */
+    csp_recip_process();
     /*
      * 检测运动模式是否发生切换。
      * 模式切换时必须把命令位置对齐当前位置，防止旧模式目标位置残留。
@@ -290,23 +421,21 @@ void ethercat_csp_motion_process(void) {
  * 注意：
  * - 本函数运行在 PDO 周期中，不能打印、不能延时、不能读写 SDO。
  */
-static void csp_motion_position_process(void)
-{
+static void csp_motion_position_process(void) {
     int64_t target_counts;
     int result;
 
     if (s_csp_position_command.pending &&
         !s_csp_position_command.active) {
-
         if (s_csp_position_command.type == CSP_POSITION_ABSOLUTE) {
             /* CurrentPosition=0就是机械零点 */
             target_counts =
-                csp_mm_to_counts(s_csp_position_command.position_mm);
+                    csp_mm_to_counts(s_csp_position_command.position_mm);
         } else {
             /* 相对运动：当前位置加上相对位移 */
             target_counts =
-                (int64_t) input1s->CurrentPosition +
-                csp_mm_to_counts(s_csp_position_command.position_mm);
+                    (int64_t) input1s->CurrentPosition +
+                    csp_mm_to_counts(s_csp_position_command.position_mm);
         }
 
         /* 相对运动计算后也不能超出机械绝对行程 */
@@ -316,7 +445,7 @@ static void csp_motion_position_process(void)
             s_csp_position_command.pending = 0U;
             s_csp_motion_ctrl.error = 1U;
             return;
-             }
+        }
 
         s_csp_position_command.target_counts = (int32) target_counts;
 
@@ -332,7 +461,7 @@ static void csp_motion_position_process(void)
         s_csp_position_command.active = 1U;
         s_csp_motion_ctrl.busy = 1U;
         s_csp_motion_ctrl.done = 0U;
-        }
+    }
 
     if (!s_csp_position_command.active) {
         return;
@@ -351,7 +480,150 @@ static void csp_motion_position_process(void)
     }
 }
 
+/*
+ * 往返调度器。
+ * 这里只调用已有绝对位置函数，不计算轨迹。
+ */
+static void csp_recip_process(void) {
+    float target_mm;
+    int result;
 
+    /* 没有手动启动往返时，不做任何处理 */
+    if (!s_csp_recip_ctrl.active) {
+        return;
+    }
+
+    /*
+     * command_running=1 表示已经下发了一段绝对位置运动，
+     * 当前正在等待该运动完成。
+     */
+    if (s_csp_recip_ctrl.command_running) {
+        /* 绝对位置运动发生异常，立即结束往返调度 */
+        if (s_csp_motion_ctrl.error) {
+            s_csp_recip_ctrl.active = 0U;
+            s_csp_recip_ctrl.command_running = 0U;
+            s_csp_recip_ctrl.wait_counter = 0U;
+            return;
+        }
+
+        /* 当前单程还没有完成，继续等待 */
+        if (!s_csp_motion_ctrl.done) {
+            return;
+        }
+
+        /* 当前单程已经完成 */
+        s_csp_recip_ctrl.command_running = 0U;
+
+        if (s_csp_recip_ctrl.moving_to_start) {
+            /*
+             * moving_to_start=1，说明刚刚完成的是：
+             * 终点 -> 最初起点。
+             */
+            if ((s_csp_recip_ctrl.mode == CSP_RECIP_ONCE) ||
+                s_csp_recip_ctrl.stop_requested) {
+                /*
+                 * 单次模式完成，或者连续模式收到停止命令：
+                 * 电机已经回到最初起点，可以结束往返。
+                 */
+                s_csp_recip_ctrl.active = 0U;
+                s_csp_recip_ctrl.wait_counter = 0U;
+                return;
+            }
+
+            /* 下一段运动方向：起点 -> 终点 */
+            s_csp_recip_ctrl.moving_to_start = 0U;
+
+            /* 使用起点单独设置的停留时间 */
+            s_csp_recip_ctrl.wait_counter =
+                    s_csp_recip_ctrl.start_dwell_cycles;
+        } else {
+            /*
+             * moving_to_start=0，说明刚刚完成的是：
+             * 最初起点 -> 终点。
+             */
+
+            /* 下一段运动方向：终点 -> 最初起点 */
+            s_csp_recip_ctrl.moving_to_start = 1U;
+
+            /*
+             * 收到停止命令时跳过终点停留，
+             * 尽快返回最初起点。
+             */
+            if (s_csp_recip_ctrl.stop_requested) {
+                s_csp_recip_ctrl.wait_counter = 0U;
+            } else {
+                /* 使用终点单独设置的停留时间 */
+                s_csp_recip_ctrl.wait_counter =
+                        s_csp_recip_ctrl.end_dwell_cycles;
+            }
+        }
+    }
+
+    /*
+     * 当前处于端点停留阶段。
+     *
+     * moving_to_start=1：
+     * 当前位于终点，等待结束后将返回起点。
+     *
+     * moving_to_start=0：
+     * 当前位于起点，等待结束后将前往终点。
+     */
+    if (s_csp_recip_ctrl.wait_counter > 0U) {
+        if (s_csp_recip_ctrl.stop_requested) {
+            if (s_csp_recip_ctrl.moving_to_start) {
+                /*
+                 * 当前位于终点：
+                 * 跳过剩余停留时间，立即准备返回起点。
+                 */
+                s_csp_recip_ctrl.wait_counter = 0U;
+            } else {
+                /*
+                 * 当前已经位于最初起点：
+                 * 收到停止命令后可以直接结束。
+                 */
+                s_csp_recip_ctrl.wait_counter = 0U;
+                s_csp_recip_ctrl.active = 0U;
+                return;
+            }
+        } else {
+            /* 每个PDO周期减少一次等待计数 */
+            s_csp_recip_ctrl.wait_counter--;
+            return;
+        }
+    }
+
+    /*
+     * 根据下一段运动方向选择绝对目标位置。
+     *
+     * moving_to_start=1：返回最初起点。
+     * moving_to_start=0：前往行程终点。
+     */
+    target_mm = s_csp_recip_ctrl.moving_to_start
+                    ? s_csp_recip_ctrl.start_mm
+                    : s_csp_recip_ctrl.end_mm;
+
+    /*
+     * 直接复用已有绝对位置运动函数。
+     * 往返模块本身不再重复实现轨迹、速度和加速度计算。
+     */
+    result = ethercat_csp_move_abs_start_mm(
+        target_mm,
+        s_csp_recip_ctrl.velocity_mps,
+        s_csp_recip_ctrl.accel_mps2);
+
+    if (result == 0) {
+        /* 命令提交成功，开始等待该段运动完成 */
+        s_csp_recip_ctrl.command_running = 1U;
+    } else {
+        /*
+         * 命令提交失败。
+         * 结束往返，避免每个PDO周期不断重复提交错误命令。
+         */
+        s_csp_recip_ctrl.active = 0U;
+        s_csp_recip_ctrl.command_running = 0U;
+        s_csp_recip_ctrl.wait_counter = 0U;
+    }
+}
 
 /*
  * 启动一段通用位置轨迹。
