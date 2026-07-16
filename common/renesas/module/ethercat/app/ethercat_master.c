@@ -11,7 +11,7 @@
 #define CSP_COUNTS_PER_REV              (262144L)
 #define CSP_TEST_STEP_COUNTS            (64L)
 
-#define CSP_LOCAL_TEST_ENABLE          (0U)
+#define CSP_LOCAL_TEST_ENABLE          (1U)
 #define CSP_LOCAL_TEST_WAIT_CYCLES     (500U)  /* 2ms × 500 = 1秒 */
 #define CSP_LOCAL_TEST_MAX_POS_ERROR   (500L)  /* 约0.095mm */
 
@@ -792,8 +792,6 @@ static void ethercat_csp_local_test_process(void)
 
     /* 连续稳定1秒后才下发测试运动 */
     if (++stable_cycles >= CSP_LOCAL_TEST_WAIT_CYCLES) {
-        /* 把此时位置设置为软件零点 */
-        ethercat_csp_zero_set_current();
 
         /*
          * 向正方向移动1mm：
@@ -801,7 +799,8 @@ static void ethercat_csp_local_test_process(void)
          * 速度：0.002m/s，即2mm/s
          * 加速度：0.02m/s²
          */
-        ethercat_csp_move_abs_start_mm(500.0f, 1.0f, 0.1f);
+        // ethercat_csp_move_abs_start_mm(250.0f, 1.0f, 0.1f);
+        ethercat_csp_move_rel_start_mm(-250.0f, 1.0f, 0.1f);
 
         command_sent = 1U;
     }
