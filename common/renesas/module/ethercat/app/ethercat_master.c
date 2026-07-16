@@ -16,7 +16,7 @@
 
 #define ETHERCAT_MASTER_TASK_PRIORITY (7U)
 
-#define ETHERCAT_DC_SYNC0_CYCLE_NS      (3000000U)
+#define ETHERCAT_DC_SYNC0_CYCLE_NS      (2000000U)
 /* IOmap buffer for EtherCAT process data */
 static char IOmap[4096];
 #pragma pack(push, 1)
@@ -173,21 +173,7 @@ void ecat_init(void) {
             printf("segments : %d : %ld %ld %ld %ld\n", ec_group[0].nsegments, ec_group[0].IOsegment[0],
                    ec_group[0].IOsegment[1], ec_group[0].IOsegment[2], ec_group[0].IOsegment[3]);
             ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE);
-#if 0
-            int chk = 200;
-            /* request OP state for all slaves */
-            ec_slave[0].state = EC_STATE_OPERATIONAL;
-            /* send one valid process data before requesting OP */
-            ec_send_processdata(); // 先发一帧有效 PDO 输出
-            ec_receive_processdata(EC_TIMEOUTRET); // 收一帧 PDO 输入，更新输入数据
-            ec_writestate(0); // 请求所有从站切换到目标状态
-            /* wait for all slaves to actually reach OP */
-            do {
-                ec_send_processdata();
-                ec_receive_processdata(EC_TIMEOUTRET);
-                ec_statecheck(0, EC_STATE_OPERATIONAL, 5000);
-            } while ((chk-- > 0) && (ec_slave[0].state != EC_STATE_OPERATIONAL));
-#endif
+
             /*
             * 第 8 步：计算期望 WKC，并先交换一帧有效过程数据。
             * expectedWKC 用于判断 PDO 通信是否完整；进入 OP 前先发一帧可让从站输出侧准备好。
@@ -204,6 +190,35 @@ void ecat_init(void) {
              */
             ec_writestate(0);
             R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
+#if 1
+            int chk = 200;
+
+            ec_slave[0].state = EC_STATE_OPERATIONAL;
+
+            /* 先发一帧有效 PDO */
+            ec_send_processdata();
+            ec_receive_processdata(EC_TIMEOUTRET);
+
+            /* 请求所有从站进入 OP */
+            ec_writestate(0);
+
+            /* 等待 OP，但循环里持续 PDO 交换，不做长时间阻塞 */
+            do {
+                ec_send_processdata();
+                ec_receive_processdata(EC_TIMEOUTRET);
+
+                ec_readstate();
+
+                R_BSP_SoftwareDelay(1, BSP_DELAY_UNITS_MILLISECONDS);
+            } while ((chk-- > 0) && (ec_slave[0].state != EC_STATE_OPERATIONAL));
+
+            for (slc = 1; slc <= ec_slavecount; slc++) {
+                printf("Slave %d State=0x%04x ALstatuscode=0x%04x\r\n",
+                       slc,
+                       ec_slave[slc].state,
+                       ec_slave[slc].ALstatuscode);
+            }
+#else
             /* wait for all slaves to reach OP state */
             do {
                 for (slc = 0; slc <= ec_slavecount; slc++) {
@@ -213,6 +228,8 @@ void ecat_init(void) {
                 }
             } while ((ec_slave[0].state != EC_STATE_OPERATIONAL) || (ec_slave[1].state != EC_STATE_OPERATIONAL));
             R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
+#endif
+
             if (ec_slave[0].state == EC_STATE_OPERATIONAL) {
                 /*
                  * 第 10 步：保存 PDO 输入/输出结构体指针。
