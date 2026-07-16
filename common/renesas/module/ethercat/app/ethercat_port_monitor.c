@@ -106,25 +106,12 @@ static void ethercat_port_monitor_task(void *pvParameters) {
         } else {
             link_up_start_tick = 0U;
             stable_reported = false;
-            if (0U == link_down_start_tick) {
-                link_down_start_tick = xTaskGetTickCount();
-            }
-            if ((!down_reported) &&
-                ((xTaskGetTickCount() - link_down_start_tick) >= ETHERCAT_LINK_STABLE_TICKS)) {
-                down_reported = true;
-
-                USR_LOG_WARN("EtherCAT port%u link down > %ums, stop master.",
-                             ETHERCAT_MASTER_PORT_NUMBER,
-                             ETHERCAT_LINK_STABLE_MS);
-
-                /* 这里执行删除/停止函数 */
-                /* ethercat_master_stop_request(); */
             }
 
             vTaskDelay(pdMS_TO_TICKS(ETHERCAT_LINK_POLL_MS));
         }
     }
-}
+
 
 static void ethercat_port_configure_ethsw_speed(void) {
     uint32_t phy_speed = 0U;

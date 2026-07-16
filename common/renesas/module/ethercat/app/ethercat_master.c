@@ -1,4 +1,5 @@
 #include "ethercat_master.h"
+#include "ethercat_app_common.h"
 
 #define DEBUG 1
 #define ETHERCAT_MASTER_TASK_NAME       "SOEM master"
@@ -170,6 +171,8 @@ void ecat_init(void) {
              */
             /* wait for all slaves to reach SAFE_OP state */
             ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE);
+            ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_SAFE_OP);
+
             /*
              * 第 7 步：刷新并打印主站/从站状态。
              * ec_readstate() 会读取各从站 AL 状态并更新 ec_slave[]。
@@ -187,6 +190,7 @@ void ecat_init(void) {
             * expectedWKC 用于判断 PDO 通信是否完整；进入 OP 前先发一帧可让从站输出侧准备好。
             */
             printf("Request operational state for all slaves\n");
+            ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_OP_REQUESTING);
             int expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
             printf("Calculated workcounter %d\n", expectedWKC);
             /* send one valid process data to make outputs in slaves happy*/
@@ -204,9 +208,7 @@ void ecat_init(void) {
             */
 #if 1
             int chk = 200;
-
             ec_slave[0].state = EC_STATE_OPERATIONAL;
-
             /* 先发一帧有效 PDO */
             ec_send_processdata();
             ec_receive_processdata(EC_TIMEOUTRET);
@@ -231,6 +233,7 @@ void ecat_init(void) {
                        ec_slave[slc].ALstatuscode);
             }
 #else
+            // 强制进入OP
             /* wait for all slaves to reach OP state */
             do {
                 for (slc = 0; slc <= ec_slavecount; slc++) {
@@ -241,7 +244,7 @@ void ecat_init(void) {
             } while ((ec_slave[0].state != EC_STATE_OPERATIONAL) || (ec_slave[1].state != EC_STATE_OPERATIONAL));
             R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
 #endif
-
+            ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_OPERATIONAL);
             if (ec_slave[0].state == EC_STATE_OPERATIONAL) {
                 /*
                  * 第 10 步：保存 PDO 输入/输出结构体指针。
@@ -260,21 +263,26 @@ void ecat_init(void) {
                 if (gpt_init() != FSP_SUCCESS) {
                     USR_LOG_INFO("GPT FARIL");
                 }
+                ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_PDO_RUNNING);
                 xTaskCreate(ethercat_pdo_monitor_log_task,
                             "PDO monitor",
                             1024U / sizeof(StackType_t),
                             NULL,
                             tskIDLE_PRIORITY + 1U,
                             NULL);
+
                 USR_LOG_INFO("all slaves reached operational state.");
             } else {
                 printf("E/BOX not found in slave configuration.\r\n");
+                ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_FAILED);
             }
         } else {
             printf("No slaves found!\r\n");
+            ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_FAILED);
         }
     } else {
         printf("No socket connection Excecute as root\r\n");
+        ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_FAILED);
     }
 }
 
@@ -291,6 +299,7 @@ usr_err_t ethercat_master_scan_start(void) {
         return USR_SUCCESS;
     }
     ethercat_app_master_scan_set_state(ETHERCAT_MASTER_SCAN_STATE_RUNNING, 0);
+    ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_SCANNING);
 
     if (pdPASS != xTaskCreate(ethercat_master_scan_task,
                               ETHERCAT_MASTER_TASK_NAME,
@@ -313,17 +322,12 @@ static void ethercat_master_scan_task(void *pvParameters) {
     ecat_init();
 
     for (;;) {
-        /* GPT 每个 PDO 周期释放一次信号量，本任务按该节拍执行一次 PDO 收发 */
         xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
 
-        /* 先发送上一周期准备好的 RxPDO，再接收从站 TxPDO，并记录 WKC */
         (void) ec_send_processdata();
         int wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
-        /* 只做快速统计和数据缓存，不在 PDO 周期里打印日志 */
         (void) ethercat_master_pdo_process_check(wkc);
-
-        /* CiA402 使能状态机。参数 0 表示不主动改 0x6060 模式，只执行使能流程 */
         (void) ethercat_servo_enable_process(0);
     }
 }
@@ -594,6 +598,14 @@ int ethercat_master_pdo_process_check(int wkc) {
     s_pdo_monitor.target_pos = output1s->TargetPos;
 
     taskEXIT_CRITICAL();
+    ethercat_app_master_status_update(wkc,
+                                      s_expected_wkc,
+                                      ec_slave[0].state,
+                                      input1s->StatusWord,
+                                      output1s->ControlWord);
+    // if (!pdo_ok) {
+    //     ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_FAULT);
+    // }
 
     return pdo_ok;
 }

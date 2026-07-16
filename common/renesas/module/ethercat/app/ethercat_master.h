@@ -2,7 +2,7 @@
 #define ETHERCAT_MASTER_H
 
 #include "um_common.h"
-#include "ethercat_app_common.h"
+
 #include "ethercat_port_cfg.h"
 #include "FreeRTOS.h"
 #include "ethercat.h"
