@@ -35,6 +35,7 @@ typedef enum {
     SERVO_ENABLE_WAIT_FAULT_CLEAR,      // 释放 0x0080，等待驱动器故障位清除
     SERVO_ENABLE_SHUTDOWN,              // 输出 0x0006，等待 Ready to switch on
     SERVO_ENABLE_SWITCH_ON,             // 输出 0x0007，等待 Switched on
+    SERVO_ENABLE_CSP_PREPARE,       // 新增：使能前准备CSP目标位置
     SERVO_ENABLE_ENABLE_OPERATION,      // 输出 0x000F，等待 Operation enabled
     SERVO_ENABLE_DONE,                  // 已使能，持续保持 0x000F
     SERVO_ENABLE_FAILED,                // 使能超时或失败

@@ -8,9 +8,12 @@
 #define ETHERCAT_PDO_MONITOR_LOG_PERIOD (500U)
 #define ETHERCAT_PDO_STALE_WARN_CYCLES  (1000U)
 
-
 #define CSP_COUNTS_PER_REV              (262144L)
 #define CSP_TEST_STEP_COUNTS            (64L)
+
+#define CSP_LOCAL_TEST_ENABLE          (0U)
+#define CSP_LOCAL_TEST_WAIT_CYCLES     (500U)  /* 2ms × 500 = 1秒 */
+#define CSP_LOCAL_TEST_MAX_POS_ERROR   (500L)  /* 约0.095mm */
 
 /*
  * 扫描、SDO和状态配置阶段使用的优先级。
@@ -34,6 +37,7 @@ typedef enum {
 static csp_test_state_t s_csp_test_state = CSP_TEST_IDLE;
 static int32 s_csp_start_pos = 0;
 static int32 s_csp_target_pos = 0;
+static int32 s_servo_enable_hold_pos = 0;
 
 static int ethercat_csp_one_rev_test_process(void);
 
@@ -65,6 +69,9 @@ static int ethercat_master_pdo_process_check(int wkc);
 
 // 伺服使能
 static int ethercat_servo_enable_process(int8 op_mode);
+
+/******************************测试************************************/
+static void ethercat_csp_local_test_process(void);
 
 /*
  * SDO 写封装函数。
@@ -291,12 +298,6 @@ void ecat_init(void) {
                 /* 设置机械参数：电机一圈 262144 counts，导程 50mm，直连 */
                 ethercat_csp_mech_param_set(262144.0f, 50.0f, 1.0f);
 
-                /* 把当前位置设置为软件零点 */
-                ethercat_csp_zero_set_current();
-
-                /* 运动到软件零点 + 50mm，速度 0.02m/s，加速度 0.10m/s^2 */
-                ethercat_csp_move_abs_start_mm(50.0f, 0.02f, 0.10f);
-
                 USR_LOG_INFO("all slaves reached operational state.");
             } else {
                 printf("E/BOX not found in slave configuration.\r\n");
@@ -348,7 +349,6 @@ static void ethercat_master_scan_task(void *pvParameters) {
     ecat_init();
 
     for (;;) {
-
         xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
 
         /* 1. 发送上一周期已经准备好的目标值 */
@@ -366,7 +366,9 @@ static void ethercat_master_scan_task(void *pvParameters) {
              * 5. 计算下一周期 TargetPos
              * 注意：这里算出的 TargetPos 会在下一次 ec_send_processdata() 发出去。
              */
+            ethercat_csp_local_test_process();
             ethercat_csp_motion_process();
+            // ethercat_csp_one_rev_test_process();
         }
     }
 }
@@ -389,13 +391,6 @@ static int ethercat_servo_enable_process(int8 op_mode) {
     status_word = input1s->StatusWord;
     status_state = status_word & CIA402_SW_MASK;
 
-    /*
-     * op_mode = 0：不修改 0x6060，保持驱动器当前/默认模式。
-     * op_mode = 8：设置 CSP，并在使能前把 TargetPos 对齐到 CurrentPosition，避免目标跳变报警。
-     */
-    if (op_mode == 8) {
-        output1s->TargetPos = input1s->CurrentPosition;
-    }
 
     if (op_mode != 0) {
         output1s->OpModeSet = op_mode;
@@ -456,27 +451,51 @@ static int ethercat_servo_enable_process(int8 op_mode) {
             break;
 
         case SERVO_ENABLE_SWITCH_ON:
-            output1s->ControlWord = CIA402_CW_SWITCH_ON;
+            output1s->ControlWord = CIA402_CW_SWITCH_ON; /* 保持0x0007 */
 
             if (status_state == CIA402_SW_SWITCHED_ON) {
-                s_enable_state = SERVO_ENABLE_ENABLE_OPERATION;
+                /* 在0x000F使能之前，先锁定当前位置 */
+                s_servo_enable_hold_pos = input1s->CurrentPosition;
+                output1s->TargetPos = s_servo_enable_hold_pos;
+                output1s->TargetVelocity = 0;
+                output1s->OpModeSet = 8;
+
                 s_enable_wait_count = 0U;
-            } else if (++s_enable_wait_count > 1000U) {
-                s_enable_state = SERVO_ENABLE_FAILED;
-                return -1;
+                s_enable_state = SERVO_ENABLE_CSP_PREPARE;
+            }
+            break;
+
+        case SERVO_ENABLE_CSP_PREPARE:
+            /*
+             * 仍保持0x0007，不输出转矩。
+             * 连续发送几帧当前位置，确保驱动器已收到安全目标。
+             */
+            output1s->ControlWord = CIA402_CW_SWITCH_ON;
+            output1s->OpModeSet = 8;
+
+            s_servo_enable_hold_pos = input1s->CurrentPosition;
+            output1s->TargetPos = s_servo_enable_hold_pos;
+            output1s->TargetVelocity = 0;
+
+            if ((input1s->OpModeNow == 8) &&
+                (++s_enable_wait_count >= 5U)) {
+                s_enable_wait_count = 0U;
+                s_enable_state = SERVO_ENABLE_ENABLE_OPERATION;
             }
             break;
 
         case SERVO_ENABLE_ENABLE_OPERATION:
+            /*
+             * 第一次发送0x000F时，目标位置已经提前发送了至少5个周期。
+             */
+            output1s->TargetPos = s_servo_enable_hold_pos;
+            output1s->TargetVelocity = 0;
             output1s->ControlWord = CIA402_CW_ENABLE_OPERATION;
 
             if (status_state == CIA402_SW_OPERATION_ENABLED) {
                 s_enable_state = SERVO_ENABLE_DONE;
                 s_enable_wait_count = 0U;
                 return 1;
-            } else if (++s_enable_wait_count > 1000U) {
-                s_enable_state = SERVO_ENABLE_FAILED;
-                return -1;
             }
             break;
 
@@ -732,4 +751,59 @@ static int ethercat_csp_one_rev_test_process(void) {
     }
 
     return 0;
+}
+
+
+/*
+ * 本地单次运动测试。
+ * 驱动器稳定使能1秒后，自动执行一次1mm绝对位置运动。
+ */
+static void ethercat_csp_local_test_process(void)
+{
+#if CSP_LOCAL_TEST_ENABLE
+    static uint32_t stable_cycles = 0U;
+    static uint8_t command_sent = 0U;
+    int32 position_error;
+
+    /* 每次上电只发送一次测试命令 */
+    if (command_sent != 0U) {
+        return;
+    }
+
+    /* 必须已经进入Operation Enabled和CSP模式 */
+    if (((input1s->StatusWord & CIA402_SW_MASK) !=
+         CIA402_SW_OPERATION_ENABLED) ||
+        (input1s->OpModeNow != 8)) {
+        stable_cycles = 0U;
+        return;
+        }
+
+    /* 检查目标位置与实际位置是否已经基本一致 */
+    position_error = output1s->TargetPos - input1s->CurrentPosition;
+
+    if (position_error < 0) {
+        position_error = -position_error;
+    }
+
+    if (position_error > CSP_LOCAL_TEST_MAX_POS_ERROR) {
+        stable_cycles = 0U;
+        return;
+    }
+
+    /* 连续稳定1秒后才下发测试运动 */
+    if (++stable_cycles >= CSP_LOCAL_TEST_WAIT_CYCLES) {
+        /* 把此时位置设置为软件零点 */
+        ethercat_csp_zero_set_current();
+
+        /*
+         * 向正方向移动1mm：
+         * 位置：1mm
+         * 速度：0.002m/s，即2mm/s
+         * 加速度：0.02m/s²
+         */
+        ethercat_csp_move_abs_start_mm(500.0f, 1.0f, 0.1f);
+
+        command_sent = 1U;
+    }
+#endif
 }
