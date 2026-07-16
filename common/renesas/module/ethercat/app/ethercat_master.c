@@ -173,33 +173,6 @@ void ecat_init(void) {
             printf("segments : %d : %ld %ld %ld %ld\n", ec_group[0].nsegments, ec_group[0].IOsegment[0],
                    ec_group[0].IOsegment[1], ec_group[0].IOsegment[2], ec_group[0].IOsegment[3]);
             ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE);
-            /*
-             * 第 8 步：计算期望 WKC，并先交换一帧有效过程数据。
-             * expectedWKC 用于判断 PDO 通信是否完整；进入 OP 前先发一帧可让从站输出侧准备好。
-             */
-            printf("Request operational state for all slaves\n");
-            int expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
-            s_expected_wkc = expectedWKC;
-            printf("Calculated workcounter %d\n", expectedWKC);
-            /* send one valid process data to make outputs in slaves happy*/
-            ec_send_processdata();
-            ec_receive_processdata(EC_TIMEOUTRET);
-            /*
-             * 第 9 步：请求从站进入 OPERATIONAL。
-             * OP 状态表示 EtherCAT 总线进入正式过程数据交互阶段。
-             */
-            ec_writestate(0);
-            R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
-#if 1
-            /* wait for all slaves to reach OP state */
-            do {
-                for (slc = 0; slc <= ec_slavecount; slc++) {
-                    ec_slave[slc].state = EC_STATE_OPERATIONAL;
-                    ec_writestate(slc);
-                    printf("Slave %d State=0x%04x\r\n", slc, ec_slave[slc].state);
-                }
-            } while ((ec_slave[0].state != EC_STATE_OPERATIONAL) || (ec_slave[1].state != EC_STATE_OPERATIONAL));
-#endif
 #if 0
             int chk = 200;
             /* request OP state for all slaves */
@@ -215,15 +188,30 @@ void ecat_init(void) {
                 ec_statecheck(0, EC_STATE_OPERATIONAL, 5000);
             } while ((chk-- > 0) && (ec_slave[0].state != EC_STATE_OPERATIONAL));
 #endif
-            ec_readstate();
-
-            for (slc = 1; slc <= ec_slavecount; slc++) {
-                printf("Slave %d State=0x%04x ALstatuscode=0x%04x\r\n",
-                       slc,
-                       ec_slave[slc].state,
-                       ec_slave[slc].ALstatuscode);
-            }
-
+            /*
+            * 第 8 步：计算期望 WKC，并先交换一帧有效过程数据。
+            * expectedWKC 用于判断 PDO 通信是否完整；进入 OP 前先发一帧可让从站输出侧准备好。
+            */
+            printf("Request operational state for all slaves\n");
+            int expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
+            printf("Calculated workcounter %d\n", expectedWKC);
+            /* send one valid process data to make outputs in slaves happy*/
+            ec_send_processdata();
+            ec_receive_processdata(EC_TIMEOUTRET);
+            /*
+             * 第 9 步：请求从站进入 OPERATIONAL。
+             * OP 状态表示 EtherCAT 总线进入正式过程数据交互阶段。
+             */
+            ec_writestate(0);
+            R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
+            /* wait for all slaves to reach OP state */
+            do {
+                for (slc = 0; slc <= ec_slavecount; slc++) {
+                    ec_slave[slc].state = EC_STATE_OPERATIONAL;
+                    ec_writestate(slc);
+                    printf("Slave %d State=0x%04x\r\n", slc, ec_slave[slc].state);
+                }
+            } while ((ec_slave[0].state != EC_STATE_OPERATIONAL) || (ec_slave[1].state != EC_STATE_OPERATIONAL));
             R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
             if (ec_slave[0].state == EC_STATE_OPERATIONAL) {
                 /*
@@ -307,7 +295,7 @@ static void ethercat_master_scan_task(void *pvParameters) {
         (void) ethercat_master_pdo_process_check(wkc);
 
         /* CSP 模式传 8。如果你暂时不想改运行模式，可以传 0。 */
-        // (void) ethercat_servo_enable_process(0);
+        (void) ethercat_servo_enable_process(0);
     }
 }
 
