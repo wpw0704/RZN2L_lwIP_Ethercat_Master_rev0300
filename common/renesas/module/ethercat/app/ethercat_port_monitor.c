@@ -74,7 +74,8 @@ usr_err_t ethercat_port_monitor_start(void) {
 static void ethercat_port_monitor_task(void *pvParameters) {
     TickType_t link_up_start_tick = 0U;
     uint8_t stable_reported = false;
-
+    TickType_t link_down_start_tick = 0U;
+    uint8_t down_reported = false;
     (void) pvParameters;
 
     for (;;) {
@@ -105,9 +106,23 @@ static void ethercat_port_monitor_task(void *pvParameters) {
         } else {
             link_up_start_tick = 0U;
             stable_reported = false;
-        }
+            if (0U == link_down_start_tick) {
+                link_down_start_tick = xTaskGetTickCount();
+            }
+            if ((!down_reported) &&
+                ((xTaskGetTickCount() - link_down_start_tick) >= ETHERCAT_LINK_STABLE_TICKS)) {
+                down_reported = true;
 
-        vTaskDelay(pdMS_TO_TICKS(ETHERCAT_LINK_POLL_MS));
+                USR_LOG_WARN("EtherCAT port%u link down > %ums, stop master.",
+                             ETHERCAT_MASTER_PORT_NUMBER,
+                             ETHERCAT_LINK_STABLE_MS);
+
+                /* 这里执行删除/停止函数 */
+                /* ethercat_master_stop_request(); */
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(ETHERCAT_LINK_POLL_MS));
+        }
     }
 }
 
@@ -170,28 +185,22 @@ static ethsw_link_speed_t ethercat_port_phy_speed_to_ethsw(uint32_t phy_speed) {
     }
 }
 
-static void ethercat_port_log_link_changes(uint32_t link_status)
-{
+static void ethercat_port_log_link_changes(uint32_t link_status) {
     static uint8_t s_initialized = false;
     static uint32_t s_last_link_status = 0U;
 
     uint32_t changed;
 
-    if (!s_initialized)
-    {
+    if (!s_initialized) {
         s_last_link_status = link_status;
         s_initialized = true;
 
-        for (uint32_t port = 0U; port < ETHERCAT_MONITOR_PORT_COUNT; port++)
-        {
+        for (uint32_t port = 0U; port < ETHERCAT_MONITOR_PORT_COUNT; port++) {
             uint32_t port_mask = ETHER_NETIF_CFG_PORT_BIT(port);
 
-            if (0U != (link_status & port_mask))
-            {
+            if (0U != (link_status & port_mask)) {
                 USR_LOG_INFO("Ethernet port%lu link up.", (unsigned long) port);
-            }
-            else
-            {
+            } else {
                 USR_LOG_WARN("Ethernet port%lu link down.", (unsigned long) port);
             }
         }
@@ -200,26 +209,20 @@ static void ethercat_port_log_link_changes(uint32_t link_status)
     }
 
     changed = link_status ^ s_last_link_status;
-    if (0U == changed)
-    {
+    if (0U == changed) {
         return;
     }
 
-    for (uint32_t port = 0U; port < ETHERCAT_MONITOR_PORT_COUNT; port++)
-    {
+    for (uint32_t port = 0U; port < ETHERCAT_MONITOR_PORT_COUNT; port++) {
         uint32_t port_mask = ETHER_NETIF_CFG_PORT_BIT(port);
 
-        if (0U == (changed & port_mask))
-        {
+        if (0U == (changed & port_mask)) {
             continue;
         }
 
-        if (0U != (link_status & port_mask))
-        {
+        if (0U != (link_status & port_mask)) {
             USR_LOG_INFO("Ethernet port%lu link up.", (unsigned long) port);
-        }
-        else
-        {
+        } else {
             USR_LOG_WARN("Ethernet port%lu link down.", (unsigned long) port);
         }
     }
