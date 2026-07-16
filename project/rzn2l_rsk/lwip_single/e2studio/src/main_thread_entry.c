@@ -31,15 +31,8 @@ void main_thread_entry(void *pvParameters) {
 
     /** TODO: add your own code here */
     while (1) {
-        if ((input1s != NULL) && (output1s != NULL)) {
-            USR_LOG_INFO("StatusWord1:%x; TargetPosition:%ld, CurrentPosition1:%ld\r\n",
-                         input1s->StatusWord,
-                         output1s->TargetPos,
-                         input1s->CurrentPosition);
-        } else {
-            USR_LOG_INFO("EtherCAT PDO not ready yet.\r\n");
-        }
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        // vTaskDelay(1000 / portTICK_PERIOD_MS);
+        vTaskDelete(NULL);
     }
 }
 
