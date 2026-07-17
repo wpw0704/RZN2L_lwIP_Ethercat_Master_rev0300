@@ -108,6 +108,7 @@ void main_thread_entry(void *pvParameters) {
                 50.0f,
                 10.0f,
                 10.0f,
+                CSP_LOCAL_JERK_MM_S3,
                 100U,
                 1000U,
                 ETHERCAT_MOTION_RECIP_FOREVER);
@@ -138,7 +139,7 @@ void main_thread_entry(void *pvParameters) {
                     ETHERCAT_MOTION_MODE_MOVE_REL,
                     -5.0f,
                     5.0f,
-                    10.0f);
+                    10.0f,CSP_LOCAL_JERK_MM_S3);
 
                 USR_LOG_INFO("KEY2 motion result=%d", result);
             }
