@@ -5,6 +5,9 @@
 #include "gpt.h"
 #include "ethercat_master.h"
 /* Main Thread entry function */
+
+static bool key_pressed(bsp_io_port_pin_t pin);
+
 /* pvParameters contains TaskHandle_t */
 void main_thread_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED(pvParameters);
@@ -31,9 +34,28 @@ void main_thread_entry(void *pvParameters) {
 
     /** TODO: add your own code here */
     while (1) {
-        // vTaskDelay(1000 / portTICK_PERIOD_MS);
-        vTaskDelete(NULL);
+        static int i = 0;
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        // vTaskDelete(NULL);
+        if (key_pressed(KEY1)) {
+            /* KEY1按下 */
+            i = 1;
+        }
+
+        if (key_pressed(KEY2)) {
+            /* KEY2按下 */
+            i = 2;
+        }
+        if (i == 0) {
+            USR_LOG_INFO("Started Serial I/O interface.");
+        }else if (i == 1) {
+            USR_LOG_INFO("KEY1111");
+        }else if (i == 2) {
+            USR_LOG_INFO("KEY2222");
+        }
+
     }
+
 }
 
 
@@ -74,4 +96,18 @@ void phy_8211(ether_phy_instance_ctrl_t *p_instance_ctrl) {
     R_ETHER_PHY_Read(p_instance_ctrl, 0x02, &val2);
 
     (void) val2;
+}
+
+static bool key_pressed(bsp_io_port_pin_t pin)
+{
+    bsp_io_level_t level;
+
+    if (R_IOPORT_PinRead(&g_ioport_ctrl,
+                         pin,
+                         &level) != FSP_SUCCESS) {
+        return false;
+                         }
+
+    /* 原理图外部上拉，按下时为低电平。 */
+    return level == BSP_IO_LEVEL_LOW;
 }

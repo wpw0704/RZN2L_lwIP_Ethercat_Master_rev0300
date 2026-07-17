@@ -1009,7 +1009,7 @@
       <property id="_symbol" value="main_thread"/>
       <property id="rtos.awsfreertos.thread.name" value="Main Thread"/>
       <property id="rtos.awsfreertos.thread.stack" value="1024"/>
-      <property id="rtos.awsfreertos.thread.priority" value="5"/>
+      <property id="rtos.awsfreertos.thread.priority" value="3"/>
       <property id="rtos.awsfreertos.thread.context" value="NULL"/>
       <property id="rtos.awsfreertos.thread.allocation" value="rtos.awsfreertos.thread.allocation.static"/>
       <stack module="module.freertos.heap.4.804891824"/>
@@ -1191,7 +1191,7 @@
     <symbolicName propertyId="p13_6.symbolic_name" value="SW3_Pin1"/>
     <symbolicName propertyId="p13_7.symbolic_name" value="SW3_Pin4"/>
     <symbolicName propertyId="p14_0.symbolic_name" value="SW3_Pin3"/>
-    <symbolicName propertyId="p14_2.symbolic_name" value="XSPI0_ECS"/>
+    <symbolicName propertyId="p14_2.symbolic_name" value="KEY1"/>
     <symbolicName propertyId="p14_4.symbolic_name" value="XSPI0_DS"/>
     <symbolicName propertyId="p14_5.symbolic_name" value="XSPI0_CKN"/>
     <symbolicName propertyId="p14_6.symbolic_name" value="XSPI0_CKP"/>
@@ -1206,7 +1206,7 @@
     <symbolicName propertyId="p15_7.symbolic_name" value="OSPI_CS"/>
     <symbolicName propertyId="p16_0.symbolic_name" value="ORAM_CS0"/>
     <symbolicName propertyId="p16_1.symbolic_name" value="XSPI0_RESET0"/>
-    <symbolicName propertyId="p16_3.symbolic_name" value="SW1"/>
+    <symbolicName propertyId="p16_3.symbolic_name" value="KEY2"/>
     <symbolicName propertyId="p16_5.symbolic_name" value="UART_USB_TX"/>
     <symbolicName propertyId="p16_6.symbolic_name" value="UART_USB_RX"/>
     <symbolicName propertyId="p17_3.symbolic_name" value="LED_RED2"/>
@@ -1441,62 +1441,8 @@
       <configSetting altId="p13_7.gpio_mode.gpio_mode_in" configurationId="p13_7.gpio_mode"/>
       <configSetting altId="p14_0.output.low" configurationId="p14_0"/>
       <configSetting altId="p14_0.gpio_mode.gpio_mode_out.low" configurationId="p14_0.gpio_mode"/>
-      <configSetting altId="p14_2.xspi0.xspi0_ecs0_hash" configurationId="p14_2"/>
-      <configSetting altId="p14_2.gpio_mode.gpio_mode_peripheral" configurationId="p14_2.gpio_mode"/>
-      <configSetting altId="p14_4.xspi0.xspi0_ds" configurationId="p14_4"/>
-      <configSetting altId="p14_4.gpio_speed.gpio_speed_high" configurationId="p14_4.gpio_drivecapacity"/>
-      <configSetting altId="p14_4.gpio_mode.gpio_mode_peripheral" configurationId="p14_4.gpio_mode"/>
-      <configSetting altId="p14_4.sr.sr.fast" configurationId="p14_4.sr"/>
-      <configSetting altId="p14_5.xspi0.xspi0_ckn" configurationId="p14_5"/>
-      <configSetting altId="p14_5.gpio_speed.gpio_speed_high" configurationId="p14_5.gpio_drivecapacity"/>
-      <configSetting altId="p14_5.gpio_mode.gpio_mode_peripheral" configurationId="p14_5.gpio_mode"/>
-      <configSetting altId="p14_5.sr.sr.fast" configurationId="p14_5.sr"/>
-      <configSetting altId="p14_6.xspi0.xspi0_ckp" configurationId="p14_6"/>
-      <configSetting altId="p14_6.gpio_speed.gpio_speed_high" configurationId="p14_6.gpio_drivecapacity"/>
-      <configSetting altId="p14_6.gpio_mode.gpio_mode_peripheral" configurationId="p14_6.gpio_mode"/>
-      <configSetting altId="p14_6.sr.sr.fast" configurationId="p14_6.sr"/>
-      <configSetting altId="p14_7.xspi0.xspi0_io0" configurationId="p14_7"/>
-      <configSetting altId="p14_7.gpio_speed.gpio_speed_high" configurationId="p14_7.gpio_drivecapacity"/>
-      <configSetting altId="p14_7.gpio_mode.gpio_mode_peripheral" configurationId="p14_7.gpio_mode"/>
-      <configSetting altId="p14_7.sr.sr.fast" configurationId="p14_7.sr"/>
-      <configSetting altId="p15_0.xspi0.xspi0_io1" configurationId="p15_0"/>
-      <configSetting altId="p15_0.gpio_speed.gpio_speed_high" configurationId="p15_0.gpio_drivecapacity"/>
-      <configSetting altId="p15_0.gpio_mode.gpio_mode_peripheral" configurationId="p15_0.gpio_mode"/>
-      <configSetting altId="p15_0.sr.sr.fast" configurationId="p15_0.sr"/>
-      <configSetting altId="p15_1.xspi0.xspi0_io2" configurationId="p15_1"/>
-      <configSetting altId="p15_1.gpio_speed.gpio_speed_high" configurationId="p15_1.gpio_drivecapacity"/>
-      <configSetting altId="p15_1.gpio_mode.gpio_mode_peripheral" configurationId="p15_1.gpio_mode"/>
-      <configSetting altId="p15_1.sr.sr.fast" configurationId="p15_1.sr"/>
-      <configSetting altId="p15_2.xspi0.xspi0_io3" configurationId="p15_2"/>
-      <configSetting altId="p15_2.gpio_speed.gpio_speed_high" configurationId="p15_2.gpio_drivecapacity"/>
-      <configSetting altId="p15_2.gpio_mode.gpio_mode_peripheral" configurationId="p15_2.gpio_mode"/>
-      <configSetting altId="p15_2.sr.sr.fast" configurationId="p15_2.sr"/>
-      <configSetting altId="p15_3.xspi0.xspi0_io4" configurationId="p15_3"/>
-      <configSetting altId="p15_3.gpio_speed.gpio_speed_high" configurationId="p15_3.gpio_drivecapacity"/>
-      <configSetting altId="p15_3.gpio_mode.gpio_mode_peripheral" configurationId="p15_3.gpio_mode"/>
-      <configSetting altId="p15_3.sr.sr.fast" configurationId="p15_3.sr"/>
-      <configSetting altId="p15_4.xspi0.xspi0_io5" configurationId="p15_4"/>
-      <configSetting altId="p15_4.gpio_speed.gpio_speed_high" configurationId="p15_4.gpio_drivecapacity"/>
-      <configSetting altId="p15_4.gpio_mode.gpio_mode_peripheral" configurationId="p15_4.gpio_mode"/>
-      <configSetting altId="p15_4.sr.sr.fast" configurationId="p15_4.sr"/>
-      <configSetting altId="p15_5.xspi0.xspi0_io6" configurationId="p15_5"/>
-      <configSetting altId="p15_5.gpio_speed.gpio_speed_high" configurationId="p15_5.gpio_drivecapacity"/>
-      <configSetting altId="p15_5.gpio_mode.gpio_mode_peripheral" configurationId="p15_5.gpio_mode"/>
-      <configSetting altId="p15_5.sr.sr.fast" configurationId="p15_5.sr"/>
-      <configSetting altId="p15_6.xspi0.xspi0_io7" configurationId="p15_6"/>
-      <configSetting altId="p15_6.gpio_speed.gpio_speed_high" configurationId="p15_6.gpio_drivecapacity"/>
-      <configSetting altId="p15_6.gpio_mode.gpio_mode_peripheral" configurationId="p15_6.gpio_mode"/>
-      <configSetting altId="p15_6.sr.sr.fast" configurationId="p15_6.sr"/>
-      <configSetting altId="p15_7.xspi0.xspi0_cs0_hash" configurationId="p15_7"/>
-      <configSetting altId="p15_7.gpio_speed.gpio_speed_high" configurationId="p15_7.gpio_drivecapacity"/>
-      <configSetting altId="p15_7.gpio_mode.gpio_mode_peripheral" configurationId="p15_7.gpio_mode"/>
-      <configSetting altId="p15_7.sr.sr.fast" configurationId="p15_7.sr"/>
-      <configSetting altId="p16_0.xspi0.xspi0_cs1_hash" configurationId="p16_0"/>
-      <configSetting altId="p16_0.gpio_speed.gpio_speed_high" configurationId="p16_0.gpio_drivecapacity"/>
-      <configSetting altId="p16_0.gpio_mode.gpio_mode_peripheral" configurationId="p16_0.gpio_mode"/>
-      <configSetting altId="p16_0.sr.sr.fast" configurationId="p16_0.sr"/>
-      <configSetting altId="p16_1.xspi0.xspi0_reset0_hash" configurationId="p16_1"/>
-      <configSetting altId="p16_1.gpio_mode.gpio_mode_peripheral" configurationId="p16_1.gpio_mode"/>
+      <configSetting altId="p14_2.input" configurationId="p14_2"/>
+      <configSetting altId="p14_2.gpio_mode.gpio_mode_in" configurationId="p14_2.gpio_mode"/>
       <configSetting altId="p16_3.input" configurationId="p16_3"/>
       <configSetting altId="p16_3.gpio_mode.gpio_mode_in" configurationId="p16_3.gpio_mode"/>
       <configSetting altId="p16_5.sci0.txd_mosi0" configurationId="p16_5"/>
@@ -1545,22 +1491,6 @@
       <configSetting altId="sci3.mode.asynchronousmode.free" configurationId="sci3.mode"/>
       <configSetting altId="sci3.rxd_miso3.p17_7" configurationId="sci3.rxd_miso3"/>
       <configSetting altId="sci3.txd_mosi3.p18_0" configurationId="sci3.txd_mosi3"/>
-      <configSetting altId="xspi0.mode.octa_40_1.8v_41.free" configurationId="xspi0.mode"/>
-      <configSetting altId="xspi0.xspi0_ckn.p14_5" configurationId="xspi0.xspi0_ckn"/>
-      <configSetting altId="xspi0.xspi0_ckp.p14_6" configurationId="xspi0.xspi0_ckp"/>
-      <configSetting altId="xspi0.xspi0_cs0_hash.p15_7" configurationId="xspi0.xspi0_cs0_hash"/>
-      <configSetting altId="xspi0.xspi0_cs1_hash.p16_0" configurationId="xspi0.xspi0_cs1_hash"/>
-      <configSetting altId="xspi0.xspi0_ds.p14_4" configurationId="xspi0.xspi0_ds"/>
-      <configSetting altId="xspi0.xspi0_ecs0_hash.p14_2" configurationId="xspi0.xspi0_ecs0_hash"/>
-      <configSetting altId="xspi0.xspi0_io0.p14_7" configurationId="xspi0.xspi0_io0"/>
-      <configSetting altId="xspi0.xspi0_io1.p15_0" configurationId="xspi0.xspi0_io1"/>
-      <configSetting altId="xspi0.xspi0_io2.p15_1" configurationId="xspi0.xspi0_io2"/>
-      <configSetting altId="xspi0.xspi0_io3.p15_2" configurationId="xspi0.xspi0_io3"/>
-      <configSetting altId="xspi0.xspi0_io4.p15_3" configurationId="xspi0.xspi0_io4"/>
-      <configSetting altId="xspi0.xspi0_io5.p15_4" configurationId="xspi0.xspi0_io5"/>
-      <configSetting altId="xspi0.xspi0_io6.p15_5" configurationId="xspi0.xspi0_io6"/>
-      <configSetting altId="xspi0.xspi0_io7.p15_6" configurationId="xspi0.xspi0_io7"/>
-      <configSetting altId="xspi0.xspi0_reset0_hash.p16_1" configurationId="xspi0.xspi0_reset0_hash"/>
     </pincfg>
     <pincfg active="false" name="R9A07G084M04GBG.pincfg" selected="false" symbol="">
       <configSetting altId="jtag_fslash_swd.mode.jtag.free" configurationId="jtag_fslash_swd.mode"/>

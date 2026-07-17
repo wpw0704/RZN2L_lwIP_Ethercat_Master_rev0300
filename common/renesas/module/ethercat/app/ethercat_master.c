@@ -296,7 +296,7 @@ void ecat_init(void) {
                             tskIDLE_PRIORITY + 1U,
                             NULL);
                 /* 设置机械参数：电机一圈 262144 counts，导程 50mm，直连 */
-                ethercat_csp_mech_param_set(262144.0f, 50.0f, 1.0f);
+                // ethercat_csp_mech_param_set(262144.0f, 50.0f, 1.0f);
 
                 USR_LOG_INFO("all slaves reached operational state.");
             } else {
@@ -369,8 +369,6 @@ static void ethercat_master_scan_task(void *pvParameters) {
              * 5. 计算下一周期 TargetPos
              * 注意：这里算出的 TargetPos 会在下一次 ec_send_processdata() 发出去。
              */
-            ethercat_csp_local_test_process();
-            ethercat_csp_motion_process();
         }
     }
 }
@@ -805,29 +803,29 @@ static void ethercat_csp_local_test_process(void) {
     //
     //     command_sent = 1U;
     // }
-
-    if (++stable_cycles >= CSP_LOCAL_TEST_WAIT_CYCLES) {
-        /*
-         * 本地往返测试：
-         * 以当前实际位置作为起点；
-         * 正向移动1mm，然后返回起点；
-         * 只执行一次完整往返。
-         */
-        int result = ethercat_csp_recip_start_mm(
-            500.0f, /* 当前位置与正方向5mm之间往返 */
-            1.0f, /* 最大速度2mm/s */
-            0.1f, /* 加速度20mm/s² */
-            1000U, /* 返回起点后停留1000ms */
-            200U, /* 到达终点后停留200ms */
-            CSP_RECIP_CONTINUOUS);
-
-        /*
-         * 只有命令提交成功才禁止再次提交。
-         * 如果提交失败，下一周期可以继续尝试。
-         */
-        if (result == 0) {
-            command_sent = 1U;
-        }
-    }
+    //
+    // if (++stable_cycles >= CSP_LOCAL_TEST_WAIT_CYCLES) {
+    //     /*
+    //      * 本地往返测试：
+    //      * 以当前实际位置作为起点；
+    //      * 正向移动1mm，然后返回起点；
+    //      * 只执行一次完整往返。
+    //      */
+    //     int result = ethercat_csp_recip_start_mm(
+    //         500.0f, /* 当前位置与正方向5mm之间往返 */
+    //         1.0f, /* 最大速度2mm/s */
+    //         0.1f, /* 加速度20mm/s² */
+    //         1000U, /* 返回起点后停留1000ms */
+    //         200U, /* 到达终点后停留200ms */
+    //         CSP_RECIP_CONTINUOUS);
+    //
+    //     /*
+    //      * 只有命令提交成功才禁止再次提交。
+    //      * 如果提交失败，下一周期可以继续尝试。
+    //      */
+    //     if (result == 0) {
+    //         command_sent = 1U;
+    //     }
+    // }
 #endif
 }
