@@ -5,8 +5,41 @@
 #include "gpt.h"
 #include "ethercat_master.h"
 /* Main Thread entry function */
+#define KEYTEST 1
 
 static bool key_pressed(bsp_io_port_pin_t pin);
+
+typedef struct {
+    uint8_t pressed_count;
+    bool latched;
+} key_filter_t;
+
+
+static bool key_press_event(bsp_io_port_pin_t pin,
+                            key_filter_t *filter) {
+    bool pressed = key_pressed(pin);
+
+    if (pressed) {
+        if (filter->pressed_count < 3U) {
+            filter->pressed_count++;
+        }
+
+        /*
+         * 连续检测到3次低电平，确认按下。
+         * 一次按下只返回一次true。
+         */
+        if ((filter->pressed_count >= 3U) &&
+            (!filter->latched)) {
+            filter->latched = true;
+            return true;
+        }
+    } else {
+        filter->pressed_count = 0U;
+        filter->latched = false;
+    }
+
+    return false;
+}
 
 /* pvParameters contains TaskHandle_t */
 void main_thread_entry(void *pvParameters) {
@@ -34,28 +67,86 @@ void main_thread_entry(void *pvParameters) {
 
     /** TODO: add your own code here */
     while (1) {
-        static int i = 0;
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-        // vTaskDelete(NULL);
-        if (key_pressed(KEY1)) {
-            /* KEY1按下 */
-            i = 1;
-        }
+#if  KEYTEST
+        static key_filter_t key1_filter;
+        static key_filter_t key2_filter;
 
-        if (key_pressed(KEY2)) {
-            /* KEY2按下 */
-            i = 2;
-        }
-        if (i == 0) {
-            USR_LOG_INFO("Started Serial I/O interface.");
-        }else if (i == 1) {
-            USR_LOG_INFO("KEY1111");
-        }else if (i == 2) {
-            USR_LOG_INFO("KEY2222");
-        }
+        ethercat_motion_status_t status;
+        int result;
 
+        vTaskDelay(pdMS_TO_TICKS(10));
+
+#if 0
+        /*
+         * KEY1：
+         * 从当前位置正向移动1mm；
+         * 速度2mm/s；
+         * 加速度10mm/s²。
+         */
+        if (key_press_event(KEY1, &key1_filter)) {
+            result = ethercat_motion_command_set(
+                ETHERCAT_MOTION_MODE_MOVE_REL,
+                10.0f,
+                2.0f,
+                10.0f);
+
+            USR_LOG_INFO("KEY1 motion result=%d", result);
+        }
+#else
+        /*
+     * KEY1：启动持续往复运动。
+     *
+     * 行程：当前位置到正方向1mm
+     * 速度：2mm/s
+     * 加速度：10mm/s²
+     * 到达终点等待：500ms
+     * 返回起点后等待：500ms
+     * 往返次数：0表示一直往返
+     */
+        if (key_press_event(KEY1, &key1_filter)) {
+            result = ethercat_motion_recip_start(
+                50.0f,
+                10.0f,
+                10.0f,
+                100U,
+                1000U,
+                ETHERCAT_MOTION_RECIP_FOREVER);
+
+            if (result == ETHERCAT_MOTION_OK) {
+                USR_LOG_INFO("KEY1 reciprocation started.");
+            } else {
+                USR_LOG_ERROR(
+                    "KEY1 reciprocation start failed: %d",
+                    result);
+            }
+        }
+#endif
+
+        /*
+         * KEY2：
+         * 如果正在运动则停止；
+         * 如果当前空闲则反向移动1mm。
+         */
+        if (key_press_event(KEY2, &key2_filter)) {
+            ethercat_motion_status_get(&status);
+
+            if (status.busy) {
+                ethercat_motion_stop();
+                USR_LOG_INFO("KEY2 motion stop");
+            } else {
+                result = ethercat_motion_command_set(
+                    ETHERCAT_MOTION_MODE_MOVE_REL,
+                    -5.0f,
+                    5.0f,
+                    10.0f);
+
+                USR_LOG_INFO("KEY2 motion result=%d", result);
+            }
+        }
+#else
+        vTaskDelete(NULL);
+# endif
     }
-
 }
 
 
@@ -98,15 +189,14 @@ void phy_8211(ether_phy_instance_ctrl_t *p_instance_ctrl) {
     (void) val2;
 }
 
-static bool key_pressed(bsp_io_port_pin_t pin)
-{
+static bool key_pressed(bsp_io_port_pin_t pin) {
     bsp_io_level_t level;
 
     if (R_IOPORT_PinRead(&g_ioport_ctrl,
                          pin,
                          &level) != FSP_SUCCESS) {
         return false;
-                         }
+    }
 
     /* 原理图外部上拉，按下时为低电平。 */
     return level == BSP_IO_LEVEL_LOW;

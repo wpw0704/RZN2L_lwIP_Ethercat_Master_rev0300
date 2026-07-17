@@ -4,17 +4,6 @@
 #define DEBUG 1
 #define ETHERCAT_MASTER_TASK_NAME       "SOEM master"
 #define ETHERCAT_MASTER_TASK_STACK_SIZE (8192U)
-
-#define ETHERCAT_PDO_MONITOR_LOG_PERIOD (500U)
-#define ETHERCAT_PDO_STALE_WARN_CYCLES  (1000U)
-
-#define CSP_COUNTS_PER_REV              (262144L)
-#define CSP_TEST_STEP_COUNTS            (64L)
-
-#define CSP_LOCAL_TEST_ENABLE          (1U)
-#define CSP_LOCAL_TEST_WAIT_CYCLES     (500U)  /* 2ms × 500 = 1秒 */
-#define CSP_LOCAL_TEST_MAX_POS_ERROR   (500L)  /* 约0.095mm */
-
 /*
  * 扫描、SDO和状态配置阶段使用的优先级。
  */
@@ -23,23 +12,18 @@
 #endif
 
 #define ETHERCAT_MASTER_TASK_PRIORITY (7U)
-
 #define ETHERCAT_DC_SYNC0_CYCLE_NS      (2000000U)
 
+//
+// typedef enum {
+//     CSP_TEST_IDLE = 0,
+//     CSP_TEST_FORWARD,
+//     CSP_TEST_BACKWARD,
+//     CSP_TEST_DONE,
+// } csp_test_state_t;
 
-typedef enum {
-    CSP_TEST_IDLE = 0,
-    CSP_TEST_FORWARD,
-    CSP_TEST_BACKWARD,
-    CSP_TEST_DONE,
-} csp_test_state_t;
 
-static csp_test_state_t s_csp_test_state = CSP_TEST_IDLE;
-static int32 s_csp_start_pos = 0;
-static int32 s_csp_target_pos = 0;
 static int32 s_servo_enable_hold_pos = 0;
-
-static int ethercat_csp_one_rev_test_process(void);
 
 /* SOEM 过程数据映射区，ec_config_map() 会把 PDO 输入输出映射到这里 */
 static char IOmap[4096];
@@ -69,9 +53,6 @@ static int ethercat_master_pdo_process_check(int wkc);
 
 // 伺服使能
 static int ethercat_servo_enable_process(int8 op_mode);
-
-/******************************测试************************************/
-static void ethercat_csp_local_test_process(void);
 
 /*
  * SDO 写封装函数。
@@ -296,7 +277,24 @@ void ecat_init(void) {
                             tskIDLE_PRIORITY + 1U,
                             NULL);
                 /* 设置机械参数：电机一圈 262144 counts，导程 50mm，直连 */
-                // ethercat_csp_mech_param_set(262144.0f, 50.0f, 1.0f);
+                /*
+                * 示例参数：
+                * 编码器262144 counts/r
+                * 丝杆导程5mm
+                * 齿轮比1
+                * 减速机比1
+                * 最大转速3000r/min
+                */
+                int result = ethercat_motion_motor_params_set(
+                    262144.0f,
+                    5.0f,
+                    1.0f,
+                    1.0f,
+                    3000.0f);
+
+                if (result != ETHERCAT_MOTION_OK) {
+                    USR_LOG_ERROR("Motion parameter error: %d", result);
+                }
 
                 USR_LOG_INFO("all slaves reached operational state.");
             } else {
@@ -369,6 +367,7 @@ static void ethercat_master_scan_task(void *pvParameters) {
              * 5. 计算下一周期 TargetPos
              * 注意：这里算出的 TargetPos 会在下一次 ec_send_processdata() 发出去。
              */
+            ethercat_motion_process();
         }
     }
 }
@@ -666,166 +665,4 @@ int ethercat_master_pdo_process_check(int wkc) {
     // }
 
     return pdo_ok;
-}
-
-/*
- * CSP 正反一圈测试：
- * - 第一次进入时记录当前位置
- * - 正转 1 圈
- * - 再反转回起点
- * - 全程只更新 TargetPos，不阻塞、不打印
- *
- * 返回值：
- *  0 = 正在运行
- *  1 = 测试完成
- * -1 = PDO 未准备好或未使能
- */
-static int ethercat_csp_one_rev_test_process(void) {
-    int32 forward_target;
-
-    if ((input1s == NULL) || (output1s == NULL)) {
-        return -1;
-    }
-
-    /* 必须已经 Operation Enabled */
-    if ((input1s->StatusWord & CIA402_SW_MASK) != CIA402_SW_OPERATION_ENABLED) {
-        return -1;
-    }
-
-    /* 必须处于 CSP 模式，0x6061 = 8 */
-    if (input1s->OpModeNow != 8) {
-        output1s->OpModeSet = 8;
-        output1s->TargetPos = input1s->CurrentPosition;
-        return -1;
-    }
-
-    switch (s_csp_test_state) {
-        case CSP_TEST_IDLE:
-            s_csp_start_pos = input1s->CurrentPosition;
-            s_csp_target_pos = s_csp_start_pos;
-
-            output1s->OpModeSet = 8;
-            output1s->TargetVelocity = 0;
-            output1s->TargetPos = s_csp_target_pos;
-
-            s_csp_test_state = CSP_TEST_FORWARD;
-            break;
-
-        case CSP_TEST_FORWARD:
-            forward_target = s_csp_start_pos + CSP_COUNTS_PER_REV;
-
-            if (s_csp_target_pos < forward_target) {
-                s_csp_target_pos += CSP_TEST_STEP_COUNTS;
-
-                if (s_csp_target_pos > forward_target) {
-                    s_csp_target_pos = forward_target;
-                }
-            } else {
-                s_csp_test_state = CSP_TEST_BACKWARD;
-            }
-
-            output1s->TargetPos = s_csp_target_pos;
-            break;
-
-        case CSP_TEST_BACKWARD:
-            if (s_csp_target_pos > s_csp_start_pos) {
-                s_csp_target_pos -= CSP_TEST_STEP_COUNTS;
-
-                if (s_csp_target_pos < s_csp_start_pos) {
-                    s_csp_target_pos = s_csp_start_pos;
-                }
-            } else {
-                s_csp_test_state = CSP_TEST_DONE;
-            }
-
-            output1s->TargetPos = s_csp_target_pos;
-            break;
-
-        case CSP_TEST_DONE:
-            output1s->TargetPos = s_csp_start_pos;
-            return 1;
-
-        default:
-            s_csp_test_state = CSP_TEST_IDLE;
-            break;
-    }
-
-    return 0;
-}
-
-
-/*
- * 本地单次运动测试。
- * 驱动器稳定使能1秒后，自动执行一次1mm绝对位置运动。
- */
-static void ethercat_csp_local_test_process(void) {
-#if CSP_LOCAL_TEST_ENABLE
-    static uint32_t stable_cycles = 0U;
-    static uint8_t command_sent = 0U;
-    int32 position_error;
-
-    /* 每次上电只发送一次测试命令 */
-    if (command_sent != 0U) {
-        return;
-    }
-
-    /* 必须已经进入Operation Enabled和CSP模式 */
-    if (((input1s->StatusWord & CIA402_SW_MASK) !=
-         CIA402_SW_OPERATION_ENABLED) ||
-        (input1s->OpModeNow != 8)) {
-        stable_cycles = 0U;
-        return;
-    }
-
-    /* 检查目标位置与实际位置是否已经基本一致 */
-    position_error = output1s->TargetPos - input1s->CurrentPosition;
-
-    if (position_error < 0) {
-        position_error = -position_error;
-    }
-
-    if (position_error > CSP_LOCAL_TEST_MAX_POS_ERROR) {
-        stable_cycles = 0U;
-        return;
-    }
-
-    // /* 连续稳定1秒后才下发测试运动 */
-    // if (++stable_cycles >= CSP_LOCAL_TEST_WAIT_CYCLES) {
-    //
-    //     /*
-    //      * 向正方向移动1mm：
-    //      * 位置：1mm
-    //      * 速度：0.002m/s，即2mm/s
-    //      * 加速度：0.02m/s²
-    //      */
-    //     // ethercat_csp_move_abs_start_mm(250.0f, 1.0f, 0.1f);
-    //     ethercat_csp_move_rel_start_mm(-250.0f, 1.0f, 0.1f);
-    //
-    //     command_sent = 1U;
-    // }
-    //
-    // if (++stable_cycles >= CSP_LOCAL_TEST_WAIT_CYCLES) {
-    //     /*
-    //      * 本地往返测试：
-    //      * 以当前实际位置作为起点；
-    //      * 正向移动1mm，然后返回起点；
-    //      * 只执行一次完整往返。
-    //      */
-    //     int result = ethercat_csp_recip_start_mm(
-    //         500.0f, /* 当前位置与正方向5mm之间往返 */
-    //         1.0f, /* 最大速度2mm/s */
-    //         0.1f, /* 加速度20mm/s² */
-    //         1000U, /* 返回起点后停留1000ms */
-    //         200U, /* 到达终点后停留200ms */
-    //         CSP_RECIP_CONTINUOUS);
-    //
-    //     /*
-    //      * 只有命令提交成功才禁止再次提交。
-    //      * 如果提交失败，下一周期可以继续尝试。
-    //      */
-    //     if (result == 0) {
-    //         command_sent = 1U;
-    //     }
-    // }
-#endif
 }
