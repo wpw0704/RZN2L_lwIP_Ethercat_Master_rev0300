@@ -359,7 +359,10 @@ static void ethercat_master_scan_task(void *pvParameters) {
 
         /* 3. 检查 PDO 状态，只做简单统计 */
         (void) ethercat_master_pdo_process_check(wkc);
-
+        /* 仅在PDO通信正常时调整GPT周期 */
+        if (wkc == 3) {
+            gpt_dc_sync_adjust(ec_DCtime);
+        }
         /* 4. 伺服使能状态机，只写 ControlWord */
         if (ethercat_servo_enable_process(0) == 1) {
             /*

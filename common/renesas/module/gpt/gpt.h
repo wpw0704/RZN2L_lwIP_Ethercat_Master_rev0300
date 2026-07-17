@@ -13,5 +13,6 @@
 extern SemaphoreHandle_t s_gpt_cycle_semaphore;
 fsp_err_t gpt_init(void);
 fsp_err_t gpt_stop(void);
+void gpt_dc_sync_adjust(int64_t dc_time_ns);
 
 #endif //RZN2L_LWIP_ETHERCAT_MASTER_REV0300_GPT_H
