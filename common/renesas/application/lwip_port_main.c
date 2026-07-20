@@ -206,16 +206,10 @@ void lwip_port_user_main(void)
     /** Wait for notification indicating the created task is initialized. */
     (void) ulTaskNotifyTake( pdTRUE, portMAX_DELAY );
 
-    /** Suspend the created task. */
-    vTaskSuspend( gp_tcp_server0_ctrl->p_server_task_handle );
-
-    /** Resume the created task */
-    vTaskResume( gp_tcp_server0_ctrl->p_server_task_handle );
-
     while( 1 )
     {
         /** Check the netif state */
-        usr_err =  gp_lwip_port0->p_api->netifStateGet(
+       gp_lwip_port0->p_api->netifStateGet(
                 gp_lwip_port0->p_ctrl,
                 &gp_tcp_server0_ctrl->lwip_netif_state, true );
         /** If the netif is up. */

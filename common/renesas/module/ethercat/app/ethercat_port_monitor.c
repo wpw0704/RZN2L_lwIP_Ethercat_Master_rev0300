@@ -50,7 +50,6 @@ usr_err_t ethercat_port_monitor_start(void) {
         return USR_SUCCESS;
     }
 
-    /* Open the low-level Ethernet driver only. Do not start lwIP or old TX test code. */
     usr_err = gp_ether_netif0->p_api->open(gp_ether_netif0->p_ctrl, gp_ether_netif0->p_cfg);
     if ((USR_SUCCESS != usr_err) && (USR_ERR_ALREADY_OPEN != usr_err) && (USR_ERR_ALREADY_RUNNING != usr_err)) {
         USR_LOG_ERROR("EtherCAT netif open failed: %d", usr_err);

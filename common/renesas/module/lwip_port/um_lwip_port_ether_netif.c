@@ -250,7 +250,7 @@ static void lwip_ether_netif_callback(
 
     /*
      * 底层 LINK_UP 表示任意端口连接。
-     * lwIP 只使用 port0，因此重新检查 port0 的状态。
+     * lwIP 只使用 port0/por2，因此重新检查 port0/por2 的状态。
      */
     if ((ETHER_NETIF_CALLBACK_EVENT_LINK_UP == p_args->event) ||
         (ETHER_NETIF_CALLBACK_EVENT_LINK_DOWN == p_args->event))
@@ -281,7 +281,7 @@ static void lwip_ether_netif_callback(
 
     p_frame = p_args->p_frame_packet;
 
-    /* 明确过滤：lwIP 只处理从 port0 收到的帧。 */
+    /* 明确过滤：lwIP 只处理从 port0/por2 收到的帧。 */
     if ((p_frame->port != ETHER_NETIF_CFG_PORT_RECV_PORT_ANY) &&
         (0U == (p_frame->port & LWIP_ETHERNET_PORT_MASK)))
     {
