@@ -185,3 +185,60 @@ usr_err_t lwip_port_user_instance_init(void)
     return usr_err;
 
 }
+
+
+/*
+ * 启动 lwIP 协议栈。
+ *
+ * 不调用 lwip_port_user_instance_init()，因为该函数会再次打开UART
+ * 和共享的 Ethernet 实例，与 EtherCAT 已经打开的实例冲突。
+ */
+usr_err_t app_lwip_stack_start(void)
+{
+    usr_err_t usr_err;
+    uint32_t link_status = 0U;
+
+    usr_err = gp_lwip_port0->p_api->open(
+        gp_lwip_port0->p_ctrl,
+        gp_lwip_port0->p_cfg);
+
+    if ((USR_SUCCESS != usr_err) &&
+        (USR_ERR_ALREADY_OPEN != usr_err) &&
+        (USR_ERR_ALREADY_RUNNING != usr_err))
+    {
+        return usr_err;
+    }
+
+    usr_err = gp_lwip_port0->p_api->start(
+        gp_lwip_port0->p_ctrl);
+
+    if (USR_SUCCESS != usr_err)
+    {
+        return usr_err;
+    }
+
+    /*
+     * lwIP Launcher任务现在已经创建。
+     * 主动重新发送一次port0链路状态，避免初始化早期的LINK_UP事件丢失。
+     */
+    usr_err = gp_ether_netif0->p_api->linkStatusGet(
+        gp_ether_netif0->p_ctrl,
+        &link_status,
+        true);
+
+    return usr_err;
+}
+
+/*
+ * 启动仓库中已有的TCP Echo Server。
+ * lwip_port_user_main()可能等待网口连接，所以放到独立任务，
+ * 避免阻塞KEY1/KEY2应用循环。
+ */
+void app_lwip_task(void *pvParameters)
+{
+    FSP_PARAMETER_NOT_USED(pvParameters);
+
+    lwip_port_user_main();
+
+    vTaskDelete(NULL);
+}

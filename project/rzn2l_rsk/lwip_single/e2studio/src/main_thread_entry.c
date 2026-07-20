@@ -4,6 +4,21 @@
 #include "ethercat_port_monitor.h"
 #include "gpt.h"
 #include "ethercat_master.h"
+#include "hal_data.h"
+
+#include "um_lwip_port_api.h"
+#include "um_ether_netif_api.h"
+#include "lwip_port_main_api.h"
+#include "task.h"
+
+#define LWIP_APP_TASK_NAME        "lwIP app"
+#define LWIP_APP_TASK_PRIORITY    (3U)
+#define LWIP_APP_TASK_STACK_BYTES (2048U)
+
+extern usr_err_t app_lwip_stack_start(void);
+
+extern void app_lwip_task(void *pvParameters);
+
 /* Main Thread entry function */
 #define KEYTEST 1
 
@@ -41,6 +56,7 @@ static bool key_press_event(bsp_io_port_pin_t pin,
     return false;
 }
 
+
 /* pvParameters contains TaskHandle_t */
 void main_thread_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED(pvParameters);
@@ -64,7 +80,32 @@ void main_thread_entry(void *pvParameters) {
             vTaskSuspend(NULL);
         }
     }
+    /* 启动lwIP协议栈。 */
+    usr_err = app_lwip_stack_start();
+    if (USR_SUCCESS != usr_err) {
+        USR_LOG_ERROR("lwIP stack start failed: %d", usr_err);
 
+        while (1) {
+            vTaskSuspend(NULL);
+        }
+    }
+
+    USR_LOG_INFO("lwIP stack started.");
+
+    /* 创建低优先级的TCP应用任务。 */
+    if (pdPASS != xTaskCreate(
+            app_lwip_task,
+            LWIP_APP_TASK_NAME,
+            LWIP_APP_TASK_STACK_BYTES / sizeof(StackType_t),
+            NULL,
+            LWIP_APP_TASK_PRIORITY,
+            NULL)) {
+        USR_LOG_ERROR("lwIP application task create failed.");
+
+        while (1) {
+            vTaskSuspend(NULL);
+        }
+    }
     /** TODO: add your own code here */
     while (1) {
 #if  KEYTEST

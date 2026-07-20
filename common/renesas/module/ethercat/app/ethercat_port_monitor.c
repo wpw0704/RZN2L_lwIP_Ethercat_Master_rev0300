@@ -26,10 +26,12 @@ static void ethercat_port_monitor_task(void *pvParameters);
 
 static void ethercat_port_configure_ethsw_speed(void);
 
+static void lwip_port2_configure_ethsw_speed(void);
+
 static ethsw_link_speed_t ethercat_port_phy_speed_to_ethsw(uint32_t phy_speed);
 
 static void ethercat_port_log_link_changes(uint32_t link_status);
-
+uint8_t port2_speed_configured = false;
 usr_err_t ethercat_port_monitor_start(void) {
     usr_err_t usr_err;
     ethercat_app_notify_t *p_notify;
@@ -86,6 +88,22 @@ static void ethercat_port_monitor_task(void *pvParameters) {
             ethercat_port_log_link_changes(link_status);
         }
 
+        /* port2连接后，根据PHY2实际协商速度配置交换机端口。 */
+        if ((USR_SUCCESS == usr_err) &&
+            (0U != (link_status & ETHER_NETIF_CFG_PORT_BIT(2U))))
+        {
+            if (!port2_speed_configured)
+            {
+                lwip_port2_configure_ethsw_speed();
+                port2_speed_configured = true;
+            }
+        }
+        else
+        {
+            /* 拔掉网线后清除标志，下次连接时重新配置。 */
+            port2_speed_configured = false;
+        }
+
         uint8_t port1_link_up = ((USR_SUCCESS == usr_err) &&
                                  (0U != (link_status & ETHERCAT_MASTER_PORT_MASK)));
 
@@ -136,10 +154,9 @@ static void ethercat_port_configure_ethsw_speed(void) {
 
     ethsw_speed = ethercat_port_phy_speed_to_ethsw(phy_speed);
 
-    /* port0/port1 是外部 PHY 口，port2 是 ESC 侧口。port3 是 GMAC 内部口，保持 FSP/GMAC 默认配置。 */
-    (void) R_ETHSW_SpeedCfg(&g_ethsw0_ctrl, 0U, ethsw_speed);
-    (void) R_ETHSW_SpeedCfg(&g_ethsw0_ctrl, 1U, ethsw_speed);
-    (void) R_ETHSW_SpeedCfg(&g_ethsw0_ctrl, 2U, ethsw_speed);
+    // (void) R_ETHSW_SpeedCfg(&g_ethsw0_ctrl, 0U, ethsw_speed);
+     (void) R_ETHSW_SpeedCfg(&g_ethsw0_ctrl, 1U, ethsw_speed);
+    // (void) R_ETHSW_SpeedCfg(&g_ethsw0_ctrl, 2U, ethsw_speed);
 
     USR_LOG_INFO("EtherCAT ETHSW speed configured from PHY%u: phy=%lu ethsw=%d.",
                  ETHERCAT_MASTER_PORT_NUMBER,
@@ -215,4 +232,51 @@ static void ethercat_port_log_link_changes(uint32_t link_status) {
     }
 
     s_last_link_status = link_status;
+}
+
+/*
+ * 根据port2外部PHY的实际协商结果配置ETHSW port2。
+ */
+static void lwip_port2_configure_ethsw_speed(void)
+{
+    uint32_t phy_speed = 0U;
+    uint32_t local_pause = 0U;
+    uint32_t partner_pause = 0U;
+    ethsw_link_speed_t ethsw_speed;
+    fsp_err_t fsp_err;
+
+    fsp_err = g_ether_phy2.p_api->linkPartnerAbilityGet(
+        g_ether_phy2.p_ctrl,
+        &phy_speed,
+        &local_pause,
+        &partner_pause);
+
+    if (FSP_SUCCESS != fsp_err)
+    {
+        USR_LOG_WARN(
+            "lwIP PHY2 speed read failed: 0x%lx",
+            (unsigned long)fsp_err);
+        return;
+    }
+
+    ethsw_speed =
+        ethercat_port_phy_speed_to_ethsw(phy_speed);
+
+    fsp_err = R_ETHSW_SpeedCfg(
+        &g_ethsw0_ctrl,
+        2U,
+        ethsw_speed);
+
+    if (FSP_SUCCESS != fsp_err)
+    {
+        USR_LOG_WARN(
+            "ETHSW port2 speed configure failed: 0x%lx",
+            (unsigned long)fsp_err);
+        return;
+    }
+
+    USR_LOG_INFO(
+        "lwIP port2 speed configured: phy=%lu, ethsw=%d",
+        (unsigned long)phy_speed,
+        (int)ethsw_speed);
 }
