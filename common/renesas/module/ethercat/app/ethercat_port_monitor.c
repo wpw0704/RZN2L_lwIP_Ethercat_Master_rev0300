@@ -18,42 +18,42 @@
 /* Start SOEM scan only after port1 has stayed Link Up for more than 500 ms. */
 #define ETHERCAT_LINK_STABLE_MS          (500U)
 #define ETHERCAT_LINK_STABLE_TICKS       pdMS_TO_TICKS(ETHERCAT_LINK_STABLE_MS)
+#define ETHERCAT_MONITOR_PORT_COUNT     (3U)
 
 extern ether_netif_instance_t const *gp_ether_netif0;
 
 static void ethercat_port_monitor_task(void *pvParameters);
+
 static void ethercat_port_configure_ethsw_speed(void);
+
 static ethsw_link_speed_t ethercat_port_phy_speed_to_ethsw(uint32_t phy_speed);
 
-usr_err_t ethercat_port_monitor_start(void)
-{
+static void ethercat_port_log_link_changes(uint32_t link_status);
+
+usr_err_t ethercat_port_monitor_start(void) {
     usr_err_t usr_err;
     ethercat_app_notify_t *p_notify;
 
     usr_err = ethercat_app_common_open();
-    if (USR_SUCCESS != usr_err)
-    {
+    if (USR_SUCCESS != usr_err) {
         USR_LOG_ERROR("EtherCAT app common open failed: %d", usr_err);
         return usr_err;
     }
 
     p_notify = ethercat_app_notify_get();
-    if (NULL != p_notify->port_monitor_task)
-    {
+    if (NULL != p_notify->port_monitor_task) {
         return USR_SUCCESS;
     }
 
     /* Open the low-level Ethernet driver only. Do not start lwIP or old TX test code. */
     usr_err = gp_ether_netif0->p_api->open(gp_ether_netif0->p_ctrl, gp_ether_netif0->p_cfg);
-    if ((USR_SUCCESS != usr_err) && (USR_ERR_ALREADY_OPEN != usr_err) && (USR_ERR_ALREADY_RUNNING != usr_err))
-    {
+    if ((USR_SUCCESS != usr_err) && (USR_ERR_ALREADY_OPEN != usr_err) && (USR_ERR_ALREADY_RUNNING != usr_err)) {
         USR_LOG_ERROR("EtherCAT netif open failed: %d", usr_err);
         return usr_err;
     }
 
     usr_err = gp_ether_netif0->p_api->start(gp_ether_netif0->p_ctrl);
-    if (USR_SUCCESS != usr_err)
-    {
+    if (USR_SUCCESS != usr_err) {
         USR_LOG_ERROR("EtherCAT netif start failed: %d", usr_err);
         return usr_err;
     }
@@ -63,8 +63,7 @@ usr_err_t ethercat_port_monitor_start(void)
                               ETHERCAT_MONITOR_TASK_STACK_SIZE / sizeof(StackType_t),
                               NULL,
                               ETHERCAT_MONITOR_TASK_PRIORITY,
-                              &p_notify->port_monitor_task))
-    {
+                              &p_notify->port_monitor_task)) {
         USR_LOG_ERROR("EtherCAT port monitor task create failed.");
         return USR_ERR_NOT_INITIALIZED;
     }
@@ -72,29 +71,31 @@ usr_err_t ethercat_port_monitor_start(void)
     return USR_SUCCESS;
 }
 
-static void ethercat_port_monitor_task(void *pvParameters)
-{
+static void ethercat_port_monitor_task(void *pvParameters) {
     TickType_t link_up_start_tick = 0U;
     uint8_t stable_reported = false;
-
+    TickType_t link_down_start_tick = 0U;
+    uint8_t down_reported = false;
     (void) pvParameters;
 
-    for (;;)
-    {
+    for (;;) {
         uint32_t link_status = 0U;
         usr_err_t usr_err = gp_ether_netif0->p_api->linkStatusGet(gp_ether_netif0->p_ctrl, &link_status, false);
-        uint8_t port1_link_up = ((USR_SUCCESS == usr_err) && (0U != (link_status & ETHERCAT_MASTER_PORT_MASK)));
 
-        if (port1_link_up)
-        {
+        if (USR_SUCCESS == usr_err) {
+            ethercat_port_log_link_changes(link_status);
+        }
+
+        uint8_t port1_link_up = ((USR_SUCCESS == usr_err) &&
+                                 (0U != (link_status & ETHERCAT_MASTER_PORT_MASK)));
+
+        if (port1_link_up) {
             /* First Link Up sample starts the stable timer; any Link Down restarts the timer. */
-            if (0U == link_up_start_tick)
-            {
+            if (0U == link_up_start_tick) {
                 link_up_start_tick = xTaskGetTickCount();
             }
 
-            if ((!stable_reported) && ((xTaskGetTickCount() - link_up_start_tick) >= ETHERCAT_LINK_STABLE_TICKS))
-            {
+            if ((!stable_reported) && ((xTaskGetTickCount() - link_up_start_tick) >= ETHERCAT_LINK_STABLE_TICKS)) {
                 stable_reported = true;
                 ethercat_port_configure_ethsw_speed();
                 USR_LOG_INFO("EtherCAT port%u link up > %ums, start SOEM slave scan.",
@@ -102,19 +103,17 @@ static void ethercat_port_monitor_task(void *pvParameters)
                              ETHERCAT_LINK_STABLE_MS);
                 (void) ethercat_master_scan_start();
             }
-        }
-        else
-        {
+        } else {
             link_up_start_tick = 0U;
             stable_reported = false;
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(ETHERCAT_LINK_POLL_MS));
         }
-
-        vTaskDelay(pdMS_TO_TICKS(ETHERCAT_LINK_POLL_MS));
     }
-}
 
-static void ethercat_port_configure_ethsw_speed(void)
-{
+
+static void ethercat_port_configure_ethsw_speed(void) {
     uint32_t phy_speed = 0U;
     uint32_t local_pause = 0U;
     uint32_t partner_pause = 0U;
@@ -128,8 +127,7 @@ static void ethercat_port_configure_ethsw_speed(void)
                                                         &phy_speed,
                                                         &local_pause,
                                                         &partner_pause);
-    if (FSP_SUCCESS != fsp_err)
-    {
+    if (FSP_SUCCESS != fsp_err) {
         USR_LOG_WARN("EtherCAT PHY%u speed read failed: 0x%lx.",
                      ETHERCAT_MASTER_PORT_NUMBER,
                      (uint32_t) fsp_err);
@@ -149,10 +147,8 @@ static void ethercat_port_configure_ethsw_speed(void)
                  ethsw_speed);
 }
 
-static ethsw_link_speed_t ethercat_port_phy_speed_to_ethsw(uint32_t phy_speed)
-{
-    switch (phy_speed)
-    {
+static ethsw_link_speed_t ethercat_port_phy_speed_to_ethsw(uint32_t phy_speed) {
+    switch (phy_speed) {
         case ETHER_PHY_LINK_SPEED_10H:
             return ETHSW_LINK_SPEED_10H;
 
@@ -174,4 +170,49 @@ static ethsw_link_speed_t ethercat_port_phy_speed_to_ethsw(uint32_t phy_speed)
         default:
             return ETHSW_LINK_SPEED_100F;
     }
+}
+
+static void ethercat_port_log_link_changes(uint32_t link_status) {
+    static uint8_t s_initialized = false;
+    static uint32_t s_last_link_status = 0U;
+
+    uint32_t changed;
+
+    if (!s_initialized) {
+        s_last_link_status = link_status;
+        s_initialized = true;
+
+        for (uint32_t port = 0U; port < ETHERCAT_MONITOR_PORT_COUNT; port++) {
+            uint32_t port_mask = ETHER_NETIF_CFG_PORT_BIT(port);
+
+            if (0U != (link_status & port_mask)) {
+                USR_LOG_INFO("Ethernet port%lu link up.", (unsigned long) port);
+            } else {
+                USR_LOG_WARN("Ethernet port%lu link down.", (unsigned long) port);
+            }
+        }
+
+        return;
+    }
+
+    changed = link_status ^ s_last_link_status;
+    if (0U == changed) {
+        return;
+    }
+
+    for (uint32_t port = 0U; port < ETHERCAT_MONITOR_PORT_COUNT; port++) {
+        uint32_t port_mask = ETHER_NETIF_CFG_PORT_BIT(port);
+
+        if (0U == (changed & port_mask)) {
+            continue;
+        }
+
+        if (0U != (link_status & port_mask)) {
+            USR_LOG_INFO("Ethernet port%lu link up.", (unsigned long) port);
+        } else {
+            USR_LOG_WARN("Ethernet port%lu link down.", (unsigned long) port);
+        }
+    }
+
+    s_last_link_status = link_status;
 }

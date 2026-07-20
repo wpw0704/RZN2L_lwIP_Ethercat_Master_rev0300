@@ -187,7 +187,9 @@ set(SOURCE_DIRS
 
 set(PROJECT_SOURCES
         common/renesas/module/gpt/gpt.c
-        common/renesas/module/gpt/gpt.h)
+        common/renesas/module/gpt/gpt.h
+        common/renesas/module/ethercat/app/ethercat_motion.c
+        common/renesas/module/ethercat/app/ethercat_motion.h)
 foreach(SOURCE_DIR IN LISTS SOURCE_DIRS)
     file(GLOB DIR_SOURCES CONFIGURE_DEPENDS "${SOURCE_DIR}/*.c")
     list(APPEND PROJECT_SOURCES ${DIR_SOURCES})

@@ -386,7 +386,7 @@ void main_thread_create(void)
                                      main_thread_func,
                                      (const char*) "Main Thread", 1024 / 4, // In words, not bytes
                                      (void*) &main_thread_parameters, //pvParameters
-                                     5,
+                                     3,
 #if 1
                                      (StackType_t*) &main_thread_stack,
                                      (StaticTask_t*) &main_thread_memory
