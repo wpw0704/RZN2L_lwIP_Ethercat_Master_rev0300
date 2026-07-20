@@ -70,8 +70,6 @@ void main_thread_entry(void *pvParameters) {
         }
     }
     USR_LOG_INFO("Started Serial I/O interface.");
-    // gpt_init();
-
     /* 当前阶段不运行发包验证函数，只启动 port1 链路稳定监控，为后续 SOEM 扫描从站做准备。 */
     usr_err = ethercat_port_monitor_start();
     if (USR_SUCCESS != usr_err) {
