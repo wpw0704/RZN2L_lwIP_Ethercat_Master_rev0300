@@ -70,7 +70,7 @@ void main_thread_entry(void *pvParameters) {
         }
     }
     USR_LOG_INFO("Started Serial I/O interface.");
-    /* 当前阶段不运行发包验证函数，只启动 port1 链路稳定监控，为后续 SOEM 扫描从站做准备。 */
+    /* 当前阶段不运行发包验证函数，只启动 port1和port0/port2 链路稳定监控，为后续做准备。 */
     usr_err = ethercat_port_monitor_start();
     if (USR_SUCCESS != usr_err) {
         USR_LOG_ERROR("EtherCAT port monitor start failed: %d", usr_err);
@@ -164,23 +164,23 @@ void main_thread_entry(void *pvParameters) {
 
         /*
          * KEY2：
-         * 如果正在运动则停止；
-         * 如果当前空闲则反向移动1mm。
+         * 如果正在运动则暂停；
+         * 如果已经暂停则继续；
+         * 如果当前空闲则不操作。
          */
         if (key_press_event(KEY2, &key2_filter)) {
             ethercat_motion_status_get(&status);
 
-            if (status.busy) {
+            if (status.busy && !status.paused) {
                 ethercat_motion_stop();
-                USR_LOG_INFO("KEY2 motion stop");
+                USR_LOG_INFO("KEY2 motion pause");
+            } else if (status.busy && status.paused) {
+                result = ethercat_motion_continue();
+                USR_LOG_INFO(
+                    "KEY2 motion continue result=%d",
+                    result);
             } else {
-                result = ethercat_motion_command_set(
-                    ETHERCAT_MOTION_MODE_MOVE_REL,
-                    -5.0f,
-                    5.0f,
-                    10.0f,CSP_LOCAL_JERK_MM_S3);
-
-                USR_LOG_INFO("KEY2 motion result=%d", result);
+                USR_LOG_INFO("KEY2 motion idle");
             }
         }
 #else
