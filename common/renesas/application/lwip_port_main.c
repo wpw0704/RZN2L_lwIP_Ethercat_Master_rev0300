@@ -29,6 +29,8 @@
 #include "lwip/errno.h"
 #include "lwip_add_on_main_api.h"
 #include "lwip_port_main_api.h"
+#include "host_protocol.h"
+#include "host_command.h"
 /** Standard library */
 #include <stdlib.h>
 
@@ -65,6 +67,7 @@ typedef struct st_tcp_server_ctrl
     fd_set                          fdset_listners;
     fd_set                          fdset_clients;
     fd_set                          fdset_all;
+    host_protocol_parser_t          protocol_parser[MEMP_NUM_NETCONN];
 
     lwip_port_netif_state_t         lwip_netif_state;
     lwip_port_instance_t
@@ -85,6 +88,12 @@ static usr_err_t tcp_server_handle_listner_socket( tcp_server_ctrl_t * p_ctrl, i
 static usr_err_t tcp_server_handle_connected_socket( tcp_server_ctrl_t * p_ctrl, int32_t connected_socket_fd );
 static int32_t   tcp_server_get_socket_by_ip_address( uint32_t ip_address, int max_fd );
 static int32_t   tcp_server_create_new_listner_socket( uint32_t ip_address, uint16_t port );
+static host_protocol_parser_t * tcp_server_protocol_parser_get(
+    tcp_server_ctrl_t * p_ctrl,
+    int32_t socket_fd );
+static usr_err_t tcp_server_status_send(
+    int32_t socket_fd,
+    host_protocol_status_t status );
 
 /***********************************************************************************************************************
  * Private global variables
@@ -206,16 +215,10 @@ void lwip_port_user_main(void)
     /** Wait for notification indicating the created task is initialized. */
     (void) ulTaskNotifyTake( pdTRUE, portMAX_DELAY );
 
-    /** Suspend the created task. */
-    vTaskSuspend( gp_tcp_server0_ctrl->p_server_task_handle );
-
-    /** Resume the created task */
-    vTaskResume( gp_tcp_server0_ctrl->p_server_task_handle );
-
     while( 1 )
     {
         /** Check the netif state */
-        usr_err =  gp_lwip_port0->p_api->netifStateGet(
+       gp_lwip_port0->p_api->netifStateGet(
                 gp_lwip_port0->p_ctrl,
                 &gp_tcp_server0_ctrl->lwip_netif_state, true );
         /** If the netif is up. */
@@ -422,8 +425,10 @@ static usr_err_t tcp_server_handle_listner_socket( tcp_server_ctrl_t * p_ctrl, i
     struct sockaddr_in client_addr;
     /** addr len */
     socklen_t client_addr_len;
+    host_protocol_parser_t * p_parser;
 
     /** Accept */
+    client_addr_len = (socklen_t) sizeof(client_addr);
     client_socket_fd = lwip_accept(listner_socket_fd, (struct sockaddr*) &client_addr, &client_addr_len);
     USR_ERROR_RETURN( -1 != client_socket_fd, USR_ERR_ABORTED );
 
@@ -432,6 +437,11 @@ static usr_err_t tcp_server_handle_listner_socket( tcp_server_ctrl_t * p_ctrl, i
     FD_SET( client_socket_fd, &p_ctrl->fdset_all );
     if ( client_socket_fd > p_ctrl->max_fd ) { p_ctrl->max_fd = client_socket_fd; }
     p_ctrl->num_of_socket++;
+
+    /* 每个TCP连接独立保存拆包和粘包解析状态。 */
+    p_parser = tcp_server_protocol_parser_get(p_ctrl, client_socket_fd);
+    USR_ERROR_RETURN( NULL != p_parser, USR_ERR_ABORTED );
+    host_protocol_parser_reset(p_parser);
 
     /** Return success code. */
     return USR_SUCCESS;
@@ -447,38 +457,138 @@ static usr_err_t tcp_server_handle_connected_socket( tcp_server_ctrl_t * p_ctrl,
 {
     /** return values of recv and send */
     ssize_t recv_size;
-    ssize_t sent_size;
 
     /** socket error */
     int32_t soc_err;
+    size_t byte_index;
+    uint8_t command = 0U;
+    host_protocol_event_t event;
+    host_protocol_status_t status;
+    host_protocol_parser_t * p_parser;
+
+    p_parser = tcp_server_protocol_parser_get(
+        p_ctrl,
+        connected_socket_fd);
+    USR_ERROR_RETURN( NULL != p_parser, USR_ERR_ABORTED );
 
     /** Receive TCP packet. */
     recv_size = lwip_recv(connected_socket_fd, p_ctrl->recv_buffer, TCP_SERVER_RECV_BUFFER_SIZE, 0);
 
-    /** If the packet is not received, check each error check by seeing errno. */
+    /** 无数据可读时保留连接；连接关闭或其他错误时释放socket和解析状态。 */
     if ( recv_size <= 0 )
     {
-        /** Check if recv() is timed out.*/
-        /** This block must be not reachable because it is ensured by select() that the client socket is readable. */
-        USR_ERROR_RETURN( errno != EWOULDBLOCK, USR_ERR_ABORTED );
-        /** Check if the socket is disconnected. */
-        if (errno == ENOTCONN)
+        if ((recv_size < 0) && (errno == EWOULDBLOCK))
         {
-            /** Close the disconnected client socket. */
-            soc_err = lwip_close( connected_socket_fd );
-            USR_ERROR_RETURN( TCP_SERVER_INVALID_SOCKET != soc_err, USR_ERR_ABORTED );
-
-            /** Update listener socket informations */
-            FD_CLR( connected_socket_fd, &p_ctrl->fdset_clients );
-            FD_CLR( connected_socket_fd, &p_ctrl->fdset_all );
-            p_ctrl->num_of_socket--;
-            /** TODO: Update max_fd */
+            return USR_SUCCESS;
         }
+
+        soc_err = lwip_close( connected_socket_fd );
+        USR_ERROR_RETURN(
+            TCP_SERVER_INVALID_SOCKET != soc_err,
+            USR_ERR_ABORTED );
+
+        FD_CLR( connected_socket_fd, &p_ctrl->fdset_clients );
+        FD_CLR( connected_socket_fd, &p_ctrl->fdset_all );
+        if (p_ctrl->num_of_socket > 0U)
+        {
+            p_ctrl->num_of_socket--;
+        }
+        host_protocol_parser_reset(p_parser);
+        return USR_SUCCESS;
     }
 
-    /** Response with TCP packet. Here, it is simple echo. */
-    sent_size = lwip_send( connected_socket_fd, p_ctrl->recv_buffer, (size_t) recv_size, 0);
-    USR_ERROR_RETURN( sent_size > 0, USR_ERR_ABORTED);
+    /*
+     * TCP是字节流：逐字节送入连接专属解析器。
+     * 每识别一个完整命令或错误帧，立即返回一个固定5字节状态帧。
+     */
+    for (byte_index = 0U;byte_index < (size_t) recv_size;byte_index++)
+    {
+        event = host_protocol_byte_push(
+            p_parser,
+            p_ctrl->recv_buffer[byte_index],
+            &command);
+
+        if (event == HOST_PROTOCOL_EVENT_NONE)
+        {
+            continue;
+        }
+
+        if (event == HOST_PROTOCOL_EVENT_COMMAND)
+        {
+            status = host_command_execute(command);
+        }
+        else
+        {
+            status = HOST_PROTOCOL_STATUS_FRAME_ERROR;
+        }
+
+        USR_ERROR_RETURN(
+            USR_SUCCESS == tcp_server_status_send(
+                connected_socket_fd,
+                status),
+            USR_ERR_ABORTED);
+    }
+
+    return USR_SUCCESS;
+}
+
+/***********************************************************************************************************************
+* Function Name: tcp_server_protocol_parser_get
+* Description  : Return the fixed parser slot associated with a lwIP socket.
+* Arguments    : Server control and socket descriptor
+* Return Value : Parser pointer, or NULL when the descriptor is out of range
+***********************************************************************************************************************/
+static host_protocol_parser_t * tcp_server_protocol_parser_get(
+    tcp_server_ctrl_t * p_ctrl,
+    int32_t socket_fd )
+{
+    int32_t parser_index;
+
+    if (NULL == p_ctrl)
+    {
+        return NULL;
+    }
+
+    parser_index = socket_fd - (int32_t) LWIP_SOCKET_OFFSET;
+    if ((parser_index < 0) ||
+        (parser_index >= (int32_t) MEMP_NUM_NETCONN))
+    {
+        return NULL;
+    }
+
+    return &p_ctrl->protocol_parser[(uint32_t) parser_index];
+}
+
+/***********************************************************************************************************************
+* Function Name: tcp_server_status_send
+* Description  : Build and send one complete fixed status frame.
+* Arguments    : Socket descriptor and protocol status
+* Return Value : USR_SUCCESS when all five bytes were sent
+***********************************************************************************************************************/
+static usr_err_t tcp_server_status_send(
+    int32_t socket_fd,
+    host_protocol_status_t status )
+{
+    uint8_t response_frame[HOST_PROTOCOL_FRAME_SIZE];
+    size_t total_sent = 0U;
+    ssize_t sent_size;
+
+    host_protocol_response_build(status, response_frame);
+
+    while (total_sent < HOST_PROTOCOL_FRAME_SIZE)
+    {
+        sent_size = lwip_send(
+            socket_fd,
+            &response_frame[total_sent],
+            HOST_PROTOCOL_FRAME_SIZE - total_sent,
+            0);
+        if (sent_size <= 0)
+        {
+            return USR_ERR_ABORTED;
+        }
+
+        total_sent += (size_t) sent_size;
+    }
 
     return USR_SUCCESS;
 }
@@ -557,7 +667,7 @@ static int32_t tcp_server_create_new_listner_socket( uint32_t ip_address, uint16
     }
 
     /** Start listening */
-    lwip_listen(socket_fd, 20);
+    socket_err = lwip_listen(socket_fd, 20);
     if ( TCP_SERVER_INVALID_SOCKET == socket_err )
     {
         socket_err = lwip_close(socket_fd);

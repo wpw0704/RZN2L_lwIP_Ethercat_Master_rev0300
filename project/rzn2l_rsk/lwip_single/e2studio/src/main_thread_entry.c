@@ -4,6 +4,21 @@
 #include "ethercat_port_monitor.h"
 #include "gpt.h"
 #include "ethercat_master.h"
+#include "hal_data.h"
+
+#include "um_lwip_port_api.h"
+#include "um_ether_netif_api.h"
+#include "lwip_port_main_api.h"
+#include "task.h"
+
+#define LWIP_APP_TASK_NAME        "lwIP app"
+#define LWIP_APP_TASK_PRIORITY    (3U)
+#define LWIP_APP_TASK_STACK_BYTES (2048U)
+
+extern usr_err_t app_lwip_stack_start(void);
+
+extern void app_lwip_task(void *pvParameters);
+
 /* Main Thread entry function */
 #define KEYTEST 1
 
@@ -41,6 +56,7 @@ static bool key_press_event(bsp_io_port_pin_t pin,
     return false;
 }
 
+
 /* pvParameters contains TaskHandle_t */
 void main_thread_entry(void *pvParameters) {
     FSP_PARAMETER_NOT_USED(pvParameters);
@@ -54,9 +70,7 @@ void main_thread_entry(void *pvParameters) {
         }
     }
     USR_LOG_INFO("Started Serial I/O interface.");
-    // gpt_init();
-
-    /* 当前阶段不运行发包验证函数，只启动 port1 链路稳定监控，为后续 SOEM 扫描从站做准备。 */
+    /* 当前阶段不运行发包验证函数，只启动 port1和port0/port2 链路稳定监控，为后续做准备。 */
     usr_err = ethercat_port_monitor_start();
     if (USR_SUCCESS != usr_err) {
         USR_LOG_ERROR("EtherCAT port monitor start failed: %d", usr_err);
@@ -64,7 +78,32 @@ void main_thread_entry(void *pvParameters) {
             vTaskSuspend(NULL);
         }
     }
+    /* 启动lwIP协议栈。 */
+    usr_err = app_lwip_stack_start();
+    if (USR_SUCCESS != usr_err) {
+        USR_LOG_ERROR("lwIP stack start failed: %d", usr_err);
 
+        while (1) {
+            vTaskSuspend(NULL);
+        }
+    }
+
+    USR_LOG_INFO("lwIP stack started.");
+
+    /* 创建低优先级的TCP应用任务。 */
+    if (pdPASS != xTaskCreate(
+            app_lwip_task,
+            LWIP_APP_TASK_NAME,
+            LWIP_APP_TASK_STACK_BYTES / sizeof(StackType_t),
+            NULL,
+            LWIP_APP_TASK_PRIORITY,
+            NULL)) {
+        USR_LOG_ERROR("lwIP application task create failed.");
+
+        while (1) {
+            vTaskSuspend(NULL);
+        }
+    }
     /** TODO: add your own code here */
     while (1) {
 #if  KEYTEST
@@ -125,23 +164,23 @@ void main_thread_entry(void *pvParameters) {
 
         /*
          * KEY2：
-         * 如果正在运动则停止；
-         * 如果当前空闲则反向移动1mm。
+         * 如果正在运动则暂停；
+         * 如果已经暂停则继续；
+         * 如果当前空闲则不操作。
          */
         if (key_press_event(KEY2, &key2_filter)) {
             ethercat_motion_status_get(&status);
 
-            if (status.busy) {
+            if (status.busy && !status.paused) {
                 ethercat_motion_stop();
-                USR_LOG_INFO("KEY2 motion stop");
+                USR_LOG_INFO("KEY2 motion pause");
+            } else if (status.busy && status.paused) {
+                result = ethercat_motion_continue();
+                USR_LOG_INFO(
+                    "KEY2 motion continue result=%d",
+                    result);
             } else {
-                result = ethercat_motion_command_set(
-                    ETHERCAT_MOTION_MODE_MOVE_REL,
-                    -5.0f,
-                    5.0f,
-                    10.0f,CSP_LOCAL_JERK_MM_S3);
-
-                USR_LOG_INFO("KEY2 motion result=%d", result);
+                USR_LOG_INFO("KEY2 motion idle");
             }
         }
 #else
