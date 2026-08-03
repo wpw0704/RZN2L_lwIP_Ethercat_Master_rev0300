@@ -13,46 +13,86 @@
 
 #define ETHERCAT_MASTER_TASK_PRIORITY (7U)
 #define ETHERCAT_DC_SYNC0_CYCLE_NS      (2000000U)
+#define ETHERCAT_CIA402_ENABLE_ACTIVE   (1U)
+#define ETHERCAT_SAFE_OP_WARMUP_CYCLES  (50U)
+#define ETHERCAT_AXIS_OP_TIMEOUT_CYCLES (1000U)
+#define ETHERCAT_AXIS_OP_STABLE_CYCLES  (50U)
+#define ETHERCAT_STATE_CHECK_INTERVAL   (25U)
+#define ETHERCAT_ZERO_WKC_LIMIT         (5U)
+#define ETHERCAT_GPT_WAIT_MS            (20U)
 
-//
-// typedef enum {
-//     CSP_TEST_IDLE = 0,
-//     CSP_TEST_FORWARD,
-//     CSP_TEST_BACKWARD,
-//     CSP_TEST_DONE,
-// } csp_test_state_t;
+/*
+ * SOEM过程数据映射区。
+ * 当前所有从站均使用本文件定义的固定RxPDO/TxPDO结构，按SOEM最大从站数预留。
+ */
+static char IOmap[EC_MAXSLAVE *
+                  (sizeof(PDO_Output) + sizeof(PDO_Input))];
 
-
-static int32 s_servo_enable_hold_pos = 0;
-
-/* SOEM 过程数据映射区，ec_config_map() 会把 PDO 输入输出映射到这里 */
-static char IOmap[4096];
-
-/* 指向 1 号从站 PDO 输出/输入区，进入 OP 后由 ec_slave[slc].outputs/inputs 赋值 */
+/*
+ * 现有运动模块使用1号从站的PDO。
+ * 多轴扫描、配置和EtherCAT OP切换覆盖全部从站，但本次不扩展多轴运动控制。
+ */
 PDO_Output *output1s;
 PDO_Input *input1s;
 
-/* PDO 监控缓存，由 2ms PDO 周期任务更新，由低优先级日志任务读取 */
-static ethercat_pdo_monitor_t s_pdo_monitor;
+/*
+ * 多轴PDO指针表，数组下标与SOEM从站号一致。
+ * 0号保留，1..s_axis_count对应扫描到的各个驱动器。
+ */
+static PDO_Output *s_axis_outputs[EC_MAXSLAVE];
+static PDO_Input *s_axis_inputs[EC_MAXSLAVE];
+static uint16_t s_axis_count;
+
+static ethercat_pdo_monitor_t s_pdo_monitor[EC_MAXSLAVE];
+static int32 s_last_position[EC_MAXSLAVE];
+static uint16 s_last_status_word[EC_MAXSLAVE];
+static int8 s_last_mode[EC_MAXSLAVE];
+static uint8_t s_has_last_sample[EC_MAXSLAVE];
 
 /* WKC 统计：expected 是理论期望值，last 是最近一次 PDO 返回值 */
 static int s_expected_wkc;
 static int s_last_wkc;
 
-/* CiA402 使能状态机当前阶段和等待计数 */
-static servo_enable_state_t s_enable_state = SERVO_ENABLE_IDLE;
-static uint32_t s_enable_wait_count = 0U;
+/*
+ * 每个轴独立的CiA402使能运行数据，数组下标与SOEM从站号一致。
+ * 不使用多维void指针数组，避免丢失PDO输入/输出的类型检查。
+ */
+static servo_enable_state_t s_enable_state[EC_MAXSLAVE];
+static uint32_t s_enable_wait_count[EC_MAXSLAVE];
+static int32 s_servo_enable_hold_pos[EC_MAXSLAVE];
+static int8_t s_enable_result[EC_MAXSLAVE];
 
 /* SOEM 主站任务入口：完成从站扫描、SV630 PDO/DC 配置，并请求进入 OP。 */
 static void ethercat_master_scan_task(void *pvParameters);
 
-// 周期打印任务
+/* 周期打印1号轴PDO状态。 */
 static void ethercat_pdo_monitor_log_task(void *pvParameters);
 
 static int ethercat_master_pdo_process_check(int wkc);
 
-// 伺服使能
-static int ethercat_servo_enable_process(int8 op_mode);
+/* 保存全部从站的PDO映射指针；全部有效返回1，否则返回0。 */
+static int ethercat_master_axis_pdo_bind(void);
+
+/* 判断全部扫描到的从站是否处于指定EtherCAT状态。 */
+static uint8_t ethercat_master_all_slaves_in_state(uint16 state);
+
+/* 使用GPT周期完成一次启动阶段PDO交换，返回实际WKC，失败返回-1。 */
+static int ethercat_master_startup_pdo_exchange(void);
+
+/* 在全部从站处于SAFE_OP时预热周期PDO，成功返回1，失败返回0。 */
+static int ethercat_master_safe_op_warmup(void);
+
+/* 请求指定从站进入OP并等待稳定，成功返回1，失败返回0。 */
+static int ethercat_master_slave_request_op(uint16_t slave);
+
+/* 按从站号逐轴请求OP，全部成功返回1，任一失败返回0。 */
+static int ethercat_master_request_op_sequential(void);
+
+/* 对指定轴执行一次CiA402使能状态机。 */
+static int ethercat_servo_enable_process(uint16_t slave, int8 op_mode);
+
+/* 对全部已绑定轴执行一次CiA402使能状态机。 */
+static int ethercat_servo_all_axes_enable_process(int8 op_mode);
 
 /*
  * SDO 写封装函数。
@@ -65,9 +105,16 @@ int write8(uint16 slave, uint16 index, uint8 subindex, int value) {
     int rtn = ec_SDOwrite(slave, index, subindex, FALSE, sizeof(temp), &temp, EC_TIMEOUTRXM);
 
     if (rtn == 0) {
-        printf("SDOwrite to %#x failed !!! \r\n", index);
+        printf("[Axis %u][SDO8] write failed: index=0x%04x sub=0x%02x\r\n",
+               (unsigned int) slave,
+               (unsigned int) index,
+               (unsigned int) subindex);
     } else if (DEBUG) {
-        printf("SDOwrite to slave%d  index:%#x value:%x Successed !!! \r\n", slave, index, temp);
+        printf("[Axis %u][SDO8] index=0x%04x sub=0x%02x value=0x%02x OK\r\n",
+               (unsigned int) slave,
+               (unsigned int) index,
+               (unsigned int) subindex,
+               (unsigned int) temp);
     }
     return rtn;
 }
@@ -78,9 +125,16 @@ int write16(uint16 slave, uint16 index, uint8 subindex, int value) {
     int rtn = ec_SDOwrite(slave, index, subindex, FALSE, sizeof(temp), &temp, EC_TIMEOUTRXM * 20);
 
     if (rtn == 0) {
-        printf("SDOwrite to %#x failed !!! \r\n", index);
+        printf("[Axis %u][SDO16] write failed: index=0x%04x sub=0x%02x\r\n",
+               (unsigned int) slave,
+               (unsigned int) index,
+               (unsigned int) subindex);
     } else if (DEBUG) {
-        printf("SDOwrite to slave%d  index:%#x value:%x Successed !!! \r\n", slave, index, temp);
+        printf("[Axis %u][SDO16] index=0x%04x sub=0x%02x value=0x%04x OK\r\n",
+               (unsigned int) slave,
+               (unsigned int) index,
+               (unsigned int) subindex,
+               (unsigned int) temp);
     }
     return rtn;
 }
@@ -90,16 +144,24 @@ int write32(uint16 slave, uint16 index, uint8 subindex, int value) {
 
     int rtn = ec_SDOwrite(slave, index, subindex, FALSE, sizeof(temp), &temp, EC_TIMEOUTRXM * 20);
     if (rtn == 0) {
-        printf("SDOwrite to %#x failed !!! \r\n", index);
+        printf("[Axis %u][SDO32] write failed: index=0x%04x sub=0x%02x\r\n",
+               (unsigned int) slave,
+               (unsigned int) index,
+               (unsigned int) subindex);
     } else if (DEBUG) {
-        printf("SDOwrite to slave%d  index:%#x value:%x Successed !!! \r\n", slave, index, temp);
+        printf("[Axis %u][SDO32] index=0x%04x sub=0x%02x value=0x%08lx OK\r\n",
+               (unsigned int) slave,
+               (unsigned int) index,
+               (unsigned int) subindex,
+               (unsigned long) temp);
     }
     return rtn;
 }
 
 // PDO配置
 static int Servosetup(uint16 slvcnt) {
-    printf(" slvcnt = %d\r\n", slvcnt);
+    printf("[Axis %u][PDO] configuring RxPDO/TxPDO mapping\r\n",
+           (unsigned int) slvcnt);
     write8(slvcnt, 0x1C12, 00, 0); // 清空0x1c12
     write8(slvcnt, 0x1600, 00, 0); // 清空0x1600
     write32(slvcnt, 0x1600, 01, 0x60400010); // 写入0x1600
@@ -128,15 +190,338 @@ static int Servosetup(uint16 slvcnt) {
     return 0;
 }
 
+/*
+ * 保存全部从站的PDO映射指针。
+ * 参数：无，使用ec_slavecount和ec_slave[]。
+ * 返回值：全部绑定成功返回1；数量或任一PDO指针无效返回0。
+ */
+static int ethercat_master_axis_pdo_bind(void) {
+    uint16_t slave;
+
+    s_axis_count = 0U;
+    output1s = NULL;
+    input1s = NULL;
+
+    for (slave = 0U; slave < (uint16_t) EC_MAXSLAVE; slave++) {
+        s_axis_outputs[slave] = NULL;
+        s_axis_inputs[slave] = NULL;
+        s_enable_state[slave] = SERVO_ENABLE_IDLE;
+        s_enable_wait_count[slave] = 0U;
+        s_servo_enable_hold_pos[slave] = 0;
+        s_enable_result[slave] = 0;
+        s_last_position[slave] = 0;
+        s_last_status_word[slave] = 0U;
+        s_last_mode[slave] = 0;
+        s_has_last_sample[slave] = 0U;
+        s_pdo_monitor[slave] = (ethercat_pdo_monitor_t) {0};
+    }
+
+    if ((ec_slavecount <= 0) || (ec_slavecount >= EC_MAXSLAVE)) {
+        return 0;
+    }
+
+    for (slave = 1U; slave <= (uint16_t) ec_slavecount; slave++) {
+        s_axis_outputs[slave] = (PDO_Output *) ec_slave[slave].outputs;
+        s_axis_inputs[slave] = (PDO_Input *) ec_slave[slave].inputs;
+
+        if ((s_axis_outputs[slave] == NULL) ||
+            (s_axis_inputs[slave] == NULL)) {
+            printf("[Axis %u][PDO] invalid mapping: outputs=%p inputs=%p\r\n",
+                   (unsigned int) slave,
+                   (void *) s_axis_outputs[slave],
+                   (void *) s_axis_inputs[slave]);
+            return 0;
+        }
+
+        s_axis_outputs[slave]->ControlWord = CIA402_CW_DISABLE_VOLTAGE;
+        s_axis_outputs[slave]->TargetVelocity = 0;
+        s_axis_outputs[slave]->OpModeSet = 8;
+        s_axis_outputs[slave]->TouchProbe = 0U;
+    }
+
+    s_axis_count = (uint16_t) ec_slavecount;
+    output1s = s_axis_outputs[1];
+    input1s = s_axis_inputs[1];
+    return 1;
+}
+
+/*
+ * 获取已经绑定的轴数量。
+ * 参数：无。
+ * 返回值：成功绑定的轴数量；尚未绑定时返回0。
+ */
+uint16_t ethercat_master_axis_count_get(void) {
+    return s_axis_count;
+}
+
+/*
+ * 获取指定轴的RxPDO输出区。
+ * 参数slave：SOEM从站号，合法范围为1..ethercat_master_axis_count_get()。
+ * 返回值：对应PDO输出指针；编号越界或尚未绑定时返回NULL。
+ */
+PDO_Output *ethercat_master_axis_output_get(uint16_t slave) {
+    if ((slave == 0U) || (slave > s_axis_count)) {
+        return NULL;
+    }
+
+    return s_axis_outputs[slave];
+}
+
+/*
+ * 获取指定轴的TxPDO输入区。
+ * 参数slave：SOEM从站号，合法范围为1..ethercat_master_axis_count_get()。
+ * 返回值：对应PDO输入指针；编号越界或尚未绑定时返回NULL。
+ */
+PDO_Input *ethercat_master_axis_input_get(uint16_t slave) {
+    if ((slave == 0U) || (slave > s_axis_count)) {
+        return NULL;
+    }
+
+    return s_axis_inputs[slave];
+}
+
+/*
+ * 查询指定轴是否已经进入CiA402 Operation Enabled。
+ * 参数slave：SOEM从站号，范围为1..s_axis_count。
+ * 返回值：1表示已使能；0表示未使能；-1表示编号或PDO指针无效。
+ */
+int ethercat_master_axis_operation_enabled_get(uint16_t slave) {
+    PDO_Input *input = ethercat_master_axis_input_get(slave);
+
+    if (input == NULL) {
+        return -1;
+    }
+
+    return (((input->StatusWord & CIA402_SW_MASK) ==
+             CIA402_SW_OPERATION_ENABLED) ? 1 : 0);
+}
+
+/*
+ * 查询全部轴是否已经进入CiA402 Operation Enabled。
+ * 参数：无。
+ * 返回值：1表示全部使能；0表示至少一轴未使能；-1表示尚未绑定轴。
+ */
+int ethercat_master_all_axes_operation_enabled_get(void) {
+    uint16_t slave;
+
+    if (s_axis_count == 0U) {
+        return -1;
+    }
+
+    for (slave = 1U; slave <= s_axis_count; slave++) {
+        if (ethercat_master_axis_operation_enabled_get(slave) != 1) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+/* 全部从站均处于指定EtherCAT状态时返回1，否则返回0。 */
+static uint8_t ethercat_master_all_slaves_in_state(uint16 state) {
+    uint16 slave;
+
+    if ((ec_slavecount <= 0) ||
+        (ec_slavecount >= EC_MAXSLAVE)) {
+        return 0U;
+    }
+
+    for (slave = 1U;
+         slave <= (uint16_t) ec_slavecount;
+         slave++) {
+        if (ec_slave[slave].state != state) {
+            return 0U;
+        }
+    }
+
+    return 1U;
+}
+
+/*
+ * 使用GPT信号量完成一次启动阶段PDO交换。
+ * 参数：无。
+ * 返回值：ec_receive_processdata()返回的实际WKC；GPT未启动或等待超时返回-1。
+ */
+static int ethercat_master_startup_pdo_exchange(void) {
+    int wkc;
+
+    if (s_gpt_cycle_semaphore == NULL) {
+        return -1;
+    }
+
+    if (xSemaphoreTake(s_gpt_cycle_semaphore,
+                       pdMS_TO_TICKS(ETHERCAT_GPT_WAIT_MS)) != pdTRUE) {
+        return -1;
+    }
+
+    (void) ec_send_processdata();
+    wkc = ec_receive_processdata(EC_TIMEOUTRET);
+    s_last_wkc = wkc;
+
+    if (wkc > 0) {
+        gpt_dc_sync_adjust(ec_DCtime);
+    }
+
+    return wkc;
+}
+
+/*
+ * 在SAFE_OP阶段按2 ms周期预热PDO。
+ * 参数：无。
+ * 返回值：连续完成预热返回1；GPT等待失败或WKC连续为0返回0。
+ */
+static int ethercat_master_safe_op_warmup(void) {
+    uint32_t cycle;
+    uint32_t zero_wkc_count = 0U;
+    uint16_t slave;
+    int wkc;
+
+    for (cycle = 0U; cycle < ETHERCAT_SAFE_OP_WARMUP_CYCLES; cycle++) {
+        wkc = ethercat_master_startup_pdo_exchange();
+        if (wkc < 0) {
+            return 0;
+        }
+
+        if (wkc == 0) {
+            zero_wkc_count++;
+            if (zero_wkc_count > ETHERCAT_ZERO_WKC_LIMIT) {
+                return 0;
+            }
+        } else {
+            zero_wkc_count = 0U;
+        }
+    }
+
+    /*
+     * SAFE_OP下已经取得有效输入，把每个轴的当前位置作为后续使能前目标值，
+     * 避免目标位置保持为IOmap初始化时的0。
+     */
+    for (slave = 1U; slave <= s_axis_count; slave++) {
+        s_servo_enable_hold_pos[slave] =
+            s_axis_inputs[slave]->CurrentPosition;
+        s_axis_outputs[slave]->TargetPos =
+            s_servo_enable_hold_pos[slave];
+    }
+
+    return 1;
+}
+
+/*
+ * 请求指定从站进入EtherCAT OP，并在GPT周期PDO不中断的条件下等待稳定。
+ * 参数slave：SOEM从站号，范围为1..s_axis_count。
+ * 返回值：该轴进入OP并稳定返回1；参数错误、超时、AL错误或PDO异常返回0。
+ */
+static int ethercat_master_slave_request_op(uint16_t slave) {
+    uint32_t cycle;
+    uint32_t stable_count = 0U;
+    uint32_t zero_wkc_count = 0U;
+    uint16 actual_state = 0U;
+    uint8_t state_confirmed = 0U;
+    int wkc;
+    int wkc_ready;
+
+    if ((slave == 0U) || (slave > s_axis_count)) {
+        return 0;
+    }
+
+    ec_slave[slave].state = EC_STATE_OPERATIONAL;
+    (void) ec_writestate(slave);
+
+    for (cycle = 0U; cycle < ETHERCAT_AXIS_OP_TIMEOUT_CYCLES; cycle++) {
+        wkc = ethercat_master_startup_pdo_exchange();
+        if (wkc < 0) {
+            return 0;
+        }
+
+        if (wkc == 0) {
+            zero_wkc_count++;
+            stable_count = 0U;
+            if (zero_wkc_count > ETHERCAT_ZERO_WKC_LIMIT) {
+                return 0;
+            }
+        } else {
+            zero_wkc_count = 0U;
+        }
+
+        /*
+         * 状态寄存器低频读取，避免在每个2 ms周期执行阻塞FPRD。
+         * ec_statecheck(..., 0)仍会执行一次实际状态读取，并刷新AL状态码。
+         */
+        if ((cycle % ETHERCAT_STATE_CHECK_INTERVAL) == 0U) {
+            actual_state = ec_statecheck(slave,
+                                         EC_STATE_OPERATIONAL,
+                                         0);
+            state_confirmed =
+                ((actual_state == EC_STATE_OPERATIONAL) &&
+                 (ec_slave[slave].state == EC_STATE_OPERATIONAL)) ? 1U : 0U;
+
+            if ((ec_slave[slave].state & EC_STATE_ERROR) != 0U) {
+                return 0;
+            }
+        }
+
+        /*
+         * 中间轴尚有从站处于SAFE_OP，实际WKC不等于最终WKC。
+         * 最后一轴进入时才要求完整WKC，之前只要求过程数据帧有效。
+         */
+        if (slave == s_axis_count) {
+            wkc_ready = ((s_expected_wkc > 0) &&
+                         (wkc >= s_expected_wkc));
+        } else {
+            wkc_ready = (wkc > 0);
+        }
+
+        if ((state_confirmed != 0U) && (wkc_ready != 0)) {
+            stable_count++;
+        } else {
+            stable_count = 0U;
+        }
+
+        if (stable_count >= ETHERCAT_AXIS_OP_STABLE_CYCLES) {
+            actual_state = ec_statecheck(slave,
+                                         EC_STATE_OPERATIONAL,
+                                         0);
+            if ((actual_state == EC_STATE_OPERATIONAL) &&
+                (ec_slave[slave].state == EC_STATE_OPERATIONAL)) {
+                return 1;
+            }
+
+            stable_count = 0U;
+            state_confirmed = 0U;
+        }
+    }
+
+    return 0;
+}
+
+/*
+ * 按SOEM从站号顺序逐轴请求EtherCAT OP。
+ * 参数：无。
+ * 返回值：全部轴进入OP并通过最终状态检查返回1；任一轴失败返回0。
+ */
+static int ethercat_master_request_op_sequential(void) {
+    uint16_t slave;
+
+    for (slave = 1U; slave <= s_axis_count; slave++) {
+        if (ethercat_master_slave_request_op(slave) == 0) {
+            return 0;
+        }
+    }
+
+    ec_readstate();
+    return (int) ethercat_master_all_slaves_in_state(
+        EC_STATE_OPERATIONAL);
+}
+
 void ecat_init(void) {
-    int slc;
+    uint16 slc;
     /*
      * 第 1 步：初始化 SOEM 网卡接口。
      * ec_init() 会调用本工程的 nicdrv/oshw 适配层，把 SOEM 主站绑定到 EtherCAT 网口。
      */
     /* initialise SOEM, bind socket to ifname */
     if (ec_init(ETHERCAT_MASTER_IFNAME)) {
-        USR_LOG_INFO("ec_init succeeded.");
+        USR_LOG_INFO("[Master] ec_init succeeded.");
         /*
          * 第 2 步：扫描并初始化 EtherCAT 从站。
          * ec_config_init(TRUE) 会枚举总线从站；返回值大于 0 表示至少发现一个从站。
@@ -148,9 +533,12 @@ void ecat_init(void) {
                      * 第 3 步：打印从站信息，并挂接 PDO 配置回调。
                      * 后续 PRE-OP 到 SAFE-OP 阶段会调用 Servosetup() 配置 0x1600/0x1A00 等 PDO 映射。
                      */
-                    printf("%ld slaves found and configured. %ld \r\n", ec_slave[slc].eep_man, ec_slave[slc].eep_id);
-                    printf("Found name=%s at position %d\r\n", ec_slave[slc].name, slc);
-                    printf("Found configadr=%d at position %d\r\n", ec_slave[slc].configadr, slc);
+                    printf("[Axis %u][Scan] name=%s vendor=0x%08lx product=0x%08lx configadr=%u\r\n",
+                           (unsigned int) slc,
+                           ec_slave[slc].name,
+                           (unsigned long) ec_slave[slc].eep_man,
+                           (unsigned long) ec_slave[slc].eep_id,
+                           (unsigned int) ec_slave[slc].configadr);
                     //					if ((ec_slave[slc].eep_man == 0x100000) && (ec_slave[slc].eep_id == 0xc0112))
                     ec_slave[slc].PO2SOconfig = &Servosetup;
                     //					else
@@ -160,17 +548,17 @@ void ecat_init(void) {
 
             /*
              * 第 4 步：配置分布式时钟 DC 与 SYNC0。
-             * 当前代码对 1 号从站开启 SYNC0，周期为 ETHERCAT_DC_SYNC0_CYCLE_NS，即 2 ms。
+             * 对扫描到的每个从站开启SYNC0，周期为ETHERCAT_DC_SYNC0_CYCLE_NS，即2 ms。
              */
             ec_configdc();
-            // for (slc = 1; slc <= ec_slavecount; slc++)
-            ec_dcsync0(1,TRUE,ETHERCAT_DC_SYNC0_CYCLE_NS, 0);
+            for (slc = 1; slc <= ec_slavecount; slc++)
+                ec_dcsync0(slc,TRUE,ETHERCAT_DC_SYNC0_CYCLE_NS, 0);
             /*
              * 第 5 步：建立 PDO 过程数据映射。
              * ec_config_map() 会生成 IOmap，并把 ec_slave[x].outputs / inputs 指向对应 PDO 区域。
              */
             ec_config_map(&IOmap);
-            printf("Slaves mapped, state to SAFE_OP.\n \r");
+            printf("[Master] PDO mapping completed; requesting SAFE_OP\r\n");
             /*
              * 第 6 步：等待所有从站进入 SAFE_OP。
              * SAFE_OP 表示 PDO 映射已经生效，输入可读，但还未进入正式输出运行状态。
@@ -185,90 +573,59 @@ void ecat_init(void) {
              */
             /* read indevidual slave state and store in ec_slave[] */
             ec_readstate();
-            for (slc = 0; slc <= ec_slavecount; slc++)
-                printf("Slave %d State=0x%04x\r\n", slc, ec_slave[slc].state);
-            printf("segments : %d : %ld %ld %ld %ld\n", ec_group[0].nsegments, ec_group[0].IOsegment[0],
-                   ec_group[0].IOsegment[1], ec_group[0].IOsegment[2], ec_group[0].IOsegment[3]);
+            printf("[Master] aggregate_state=0x%04x\r\n",
+                   (unsigned int) ec_slave[0].state);
+            for (slc = 1U; slc <= (uint16) ec_slavecount; slc++) {
+                printf("[Axis %u][EtherCAT] state=0x%04x\r\n",
+                       (unsigned int) slc,
+                       (unsigned int) ec_slave[slc].state);
+            }
+            printf("[Master] segments=%u sizes=%lu/%lu/%lu/%lu\r\n",
+                   (unsigned int) ec_group[0].nsegments,
+                   (unsigned long) ec_group[0].IOsegment[0],
+                   (unsigned long) ec_group[0].IOsegment[1],
+                   (unsigned long) ec_group[0].IOsegment[2],
+                   (unsigned long) ec_group[0].IOsegment[3]);
             ec_statecheck(0, EC_STATE_SAFE_OP, EC_TIMEOUTSTATE);
 
             /*
-            * 第 8 步：计算期望 WKC，并先交换一帧有效过程数据。
-            * expectedWKC 用于判断 PDO 通信是否完整；进入 OP 前先发一帧可让从站输出侧准备好。
-            */
-            printf("Request operational state for all slaves\n");
-            ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_OP_REQUESTING);
-            int expectedWKC = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
-            printf("Calculated workcounter %d\n", expectedWKC);
-            /* send one valid process data to make outputs in slaves happy*/
-            ec_send_processdata();
-            ec_receive_processdata(EC_TIMEOUTRET);
-            /*
-             * 第 9 步：请求从站进入 OPERATIONAL。
-             * OP 状态表示 EtherCAT 总线进入正式过程数据交互阶段。
+             * 第 8 步：计算整个从站组的期望WKC。
+             * 多轴时不能再使用单轴固定值3。
              */
-            ec_writestate(0);
-            R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
-            /*
-            * 请求进入 OP 后，持续交换 PDO，并用 ec_readstate() 读取真实状态。
-            * 不使用长时间阻塞的 ec_statecheck(..., 5000)，避免 SV630 因 PDO/SYNC 更新超时触发 E08.6。
-            */
-#if 1
-            int chk = 200;
-            ec_slave[0].state = EC_STATE_OPERATIONAL;
-            /* 先发一帧有效 PDO */
-            ec_send_processdata();
-            ec_receive_processdata(EC_TIMEOUTRET);
+            printf("[Master] requesting EtherCAT OP sequentially\r\n");
+            ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_OP_REQUESTING);
+            s_expected_wkc = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
+            printf("[Master] expected WKC=%d for %d axes\r\n",
+                   s_expected_wkc,
+                   ec_slavecount);
 
-            /* 请求所有从站进入 OP */
-            ec_writestate(0);
-
-            /* 等待 OP，但循环里持续 PDO 交换，不做长时间阻塞 */
-            do {
-                ec_send_processdata();
-                ec_receive_processdata(EC_TIMEOUTRET);
-
-                ec_readstate();
-
-                R_BSP_SoftwareDelay(1, BSP_DELAY_UNITS_MILLISECONDS);
-            } while ((chk-- > 0) && (ec_slave[0].state != EC_STATE_OPERATIONAL));
-
-            for (slc = 1; slc <= ec_slavecount; slc++) {
-                printf("Slave %d State=0x%04x ALstatuscode=0x%04x\r\n",
-                       slc,
-                       ec_slave[slc].state,
-                       ec_slave[slc].ALstatuscode);
+            /* 保存每个轴的inputs/outputs，数组下标与SOEM从站号一致。 */
+            if (0 == ethercat_master_axis_pdo_bind()) {
+                printf("[Master] one or more axis PDO pointers are invalid\r\n");
+                ethercat_app_master_scan_set_state(ETHERCAT_MASTER_SCAN_STATE_FAILED, 0);
+                ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_FAILED);
+                return;
             }
-#else
-            // 强制进入OP
-            /* wait for all slaves to reach OP state */
-            do {
-                for (slc = 0; slc <= ec_slavecount; slc++) {
-                    ec_slave[slc].state = EC_STATE_OPERATIONAL;
-                    ec_writestate(slc);
-                    printf("Slave %d State=0x%04x\r\n", slc, ec_slave[slc].state);
-                }
-            } while ((ec_slave[0].state != EC_STATE_OPERATIONAL) || (ec_slave[1].state != EC_STATE_OPERATIONAL));
-            R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
-#endif
-            ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_OPERATIONAL);
-            if (ec_slave[0].state == EC_STATE_OPERATIONAL) {
+
+            /*
+             * 第9步：在SAFE_OP阶段先启动2 ms GPT并预热PDO，然后按轴号逐个请求OP。
+             * 任一轴进入OP后，等待下一轴期间仍由同一GPT节拍持续交换全部PDO。
+             */
+            if (gpt_init() != FSP_SUCCESS) {
+                USR_LOG_ERROR("[Master] GPT init failed.");
+                ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_FAILED);
+                return;
+            }
+
+            if ((ethercat_master_safe_op_warmup() != 0) &&
+                (ethercat_master_request_op_sequential() != 0)) {
                 /*
-                 * 第 10 步：保存 PDO 输入/输出结构体指针。
-                 * output1s 指向主站写给驱动器的 RxPDO；input1s 指向驱动器返回给主站的 TxPDO。
+                 * 第10步：全部从站均确认OP后切换到正常PDO处理。
+                 * 同一个GPT周期继续运行，随后逐轴执行CiA402使能，但不启动运动轨迹。
                  */
-                for (slc = 1; slc <= ec_slavecount; slc++) {
-                    output1s = (PDO_Output *) ec_slave[slc].outputs;
-                    input1s = (PDO_Input *) ec_slave[slc].inputs;
-                }
-                /*
-                * GPT启动后，本任务不能再执行阻塞日志。*/
-                /*
-                 * 第 11 步：启动 GPT 周期定时器。
-                 * GPT 回调每 4 ms 释放一次信号量，SOEM master 任务后续按该节拍执行 PDO 收发。
-                 */
-                if (gpt_init() != FSP_SUCCESS) {
-                    USR_LOG_INFO("GPT FARIL");
-                }
+                ethercat_app_master_scan_set_state(ETHERCAT_MASTER_SCAN_STATE_DONE, ec_slavecount);
+                ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_OPERATIONAL);
+
                 ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_PDO_RUNNING);
                 xTaskCreate(ethercat_pdo_monitor_log_task,
                             "PDO monitor",
@@ -276,38 +633,34 @@ void ecat_init(void) {
                             NULL,
                             tskIDLE_PRIORITY + 1U,
                             NULL);
-                /* 设置机械参数：电机一圈 262144 counts，导程 50mm，直连 */
-                /*
-                * 示例参数：
-                * 编码器262144 counts/r
-                * 丝杆导程5mm
-                * 齿轮比1
-                * 减速机比1
-                * 最大转速3000r/min
-                */
-                int result = ethercat_motion_motor_params_set(
-                    262144.0f,
-                    5.0f,
-                    1.0f,
-                    1.0f,
-                    3000.0f);
-
-                if (result != ETHERCAT_MOTION_OK) {
-                    USR_LOG_ERROR("Motion parameter error: %d", result);
-                }
-
-                USR_LOG_INFO("all slaves reached operational state.");
             } else {
-                printf("E/BOX not found in slave configuration.\r\n");
+                (void) gpt_stop();
+                ec_readstate();
+                for (slc = 1; slc <= ec_slavecount; slc++) {
+                    if (ec_slave[slc].state != EC_STATE_OPERATIONAL) {
+                        printf("[Axis %u][EtherCAT] failed to reach OP: state=0x%04x "
+                               "ALstatus=0x%04x (%s)\r\n",
+                               (unsigned int) slc,
+                               (unsigned int) ec_slave[slc].state,
+                               (unsigned int) ec_slave[slc].ALstatuscode,
+                               ec_ALstatuscode2string(ec_slave[slc].ALstatuscode));
+                    }
+                }
+                ethercat_app_master_scan_set_state(ETHERCAT_MASTER_SCAN_STATE_DONE, ec_slavecount);
                 ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_FAILED);
+                return;
             }
         } else {
-            printf("No slaves found!\r\n");
+            printf("[Master] no EtherCAT axes found\r\n");
+            ethercat_app_master_scan_set_state(ETHERCAT_MASTER_SCAN_STATE_FAILED, 0);
             ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_FAILED);
+            return;
         }
     } else {
-        printf("No socket connection Excecute as root\r\n");
+        printf("[Master] EtherCAT network interface initialization failed\r\n");
+        ethercat_app_master_scan_set_state(ETHERCAT_MASTER_SCAN_STATE_FAILED, 0);
         ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_FAILED);
+        return;
     }
 }
 
@@ -332,7 +685,7 @@ usr_err_t ethercat_master_scan_start(void) {
                               NULL,
                               ETHERCAT_MASTER_TASK_PRIORITY,
                               &p_notify->master_scan_task)) {
-        USR_LOG_ERROR("SOEM master task create failed.");
+        USR_LOG_ERROR("[Master] SOEM task creation failed.");
         ethercat_app_master_scan_set_state(ETHERCAT_MASTER_SCAN_STATE_FAILED, 0);
         return USR_ERR_NOT_INITIALIZED;
     }
@@ -343,8 +696,15 @@ usr_err_t ethercat_master_scan_start(void) {
 
 static void ethercat_master_scan_task(void *pvParameters) {
     (void) pvParameters;
-    USR_LOG_INFO("SOEM master start on %s.", ETHERCAT_MASTER_IFNAME);
+    USR_LOG_INFO("[Master] SOEM start on %s.", ETHERCAT_MASTER_IFNAME);
     ecat_init();
+
+    if (ethercat_app_master_run_get_state() != ETHERCAT_MASTER_RUN_STATE_PDO_RUNNING) {
+        USR_LOG_ERROR("[Master] stopped before PDO cycle because not all axes reached OP.");
+        vTaskDelete(NULL);
+        return;
+    }
+    ethercat_motion_motor_params_set(262144,5,1,1,3000);
 
     for (;;) {
         xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
@@ -355,160 +715,229 @@ static void ethercat_master_scan_task(void *pvParameters) {
         /* 2. 接收本周期反馈 */
         int wkc = ec_receive_processdata(EC_TIMEOUTRET);
 
-        /* 3. 检查 PDO 状态，只做简单统计 */
-        (void) ethercat_master_pdo_process_check(wkc);
+        /* 3. 检查整个从站组的PDO状态。 */
+        int pdo_ok = ethercat_master_pdo_process_check(wkc);
         /* 仅在PDO通信正常时调整GPT周期 */
-        if (wkc == 3) {
+        if (pdo_ok != 0) {
             gpt_dc_sync_adjust(ec_DCtime);
         }
-        /* 4. 伺服使能状态机，只写 ControlWord */
-        if (ethercat_servo_enable_process(0) == 1) {
+        if (pdo_ok != 0) {
             /*
-             * 5. 计算下一周期 TargetPos
-             * 注意：这里算出的 TargetPos 会在下一次 ec_send_processdata() 发出去。
+             * 先逐轴推进CiA402使能状态机，使能期间由状态机保持
+             * 各轴当前位置，避免目标位置从0或旧轨迹值突跳。
              */
-            ethercat_motion_process();
+            if (ETHERCAT_CIA402_ENABLE_ACTIVE != 0U) {
+                (void) ethercat_servo_all_axes_enable_process(0);
+            }
+
+            /*
+             * 当前运动模块只绑定1号轴。确认1号轴已进入
+             * Operation Enabled后再推进轨迹，生成下一PDO周期的0x607A。
+             */
+            if (ethercat_master_axis_operation_enabled_get(1U) == 1) {
+                ethercat_motion_process();
+            }
         }
     }
 }
 
 /************************** 伺服使能 **************************/
 /*
- * 返回值：
- *  1  = 已进入 Operation Enabled
- *  0  = 正在使能过程中
- * -1  = 使能失败或 PDO 未准备好
+ * 对指定轴执行一次CiA402使能状态机。
+ * 参数slave：SOEM从站号，范围为1..s_axis_count。
+ * 参数op_mode：运行模式，8表示CSP；0表示不修改模式。
+ * 返回值：1表示Operation Enabled；0表示正在使能；-1表示失败或PDO无效。
  */
-static int ethercat_servo_enable_process(int8 op_mode) {
+static int ethercat_servo_enable_process(uint16_t slave, int8 op_mode) {
+    PDO_Input *input;
+    PDO_Output *output;
     uint16 status_word;
     uint16 status_state;
 
-    if ((input1s == NULL) || (output1s == NULL)) {
+    if ((slave == 0U) || (slave > s_axis_count)) {
         return -1;
     }
 
-    status_word = input1s->StatusWord;
-    status_state = status_word & CIA402_SW_MASK;
-
-
-    if (op_mode != 0) {
-        output1s->OpModeSet = op_mode;
+    input = s_axis_inputs[slave];
+    output = s_axis_outputs[slave];
+    if ((input == NULL) || (output == NULL)) {
+        return -1;
     }
 
+    status_word = input->StatusWord;
+    status_state = status_word & CIA402_SW_MASK;
+
+    if (op_mode != 0) {
+        output->OpModeSet = op_mode;
+    }
+
+    /*
+     * 驱动器已经使能时继续保持该轴锁定位置。
+     * 首次发现已使能状态时先采用当前位置，避免目标值仍为0导致突跳。
+     */
     if (status_state == CIA402_SW_OPERATION_ENABLED) {
-        output1s->ControlWord = CIA402_CW_ENABLE_OPERATION;
-        s_enable_state = SERVO_ENABLE_DONE;
-        s_enable_wait_count = 0U;
+        if (s_enable_state[slave] != SERVO_ENABLE_DONE) {
+            s_servo_enable_hold_pos[slave] = input->CurrentPosition;
+        }
+
+        output->TargetPos = s_servo_enable_hold_pos[slave];
+        output->TargetVelocity = 0;
+        output->ControlWord = CIA402_CW_ENABLE_OPERATION;
+
+        if ((op_mode != 0) && (input->OpModeNow != op_mode)) {
+            return 0;
+        }
+
+        s_enable_state[slave] = SERVO_ENABLE_DONE;
+        s_enable_wait_count[slave] = 0U;
         return 1;
     }
 
-    switch (s_enable_state) {
+    switch (s_enable_state[slave]) {
         case SERVO_ENABLE_IDLE:
-            s_enable_wait_count = 0U;
+            s_enable_wait_count[slave] = 0U;
+            output->ControlWord = CIA402_CW_DISABLE_VOLTAGE;
 
             if ((status_word & CIA402_SW_FAULT_MASK) == CIA402_SW_FAULT) {
-                s_enable_state = SERVO_ENABLE_FAULT_RESET_PULSE;
+                s_enable_state[slave] = SERVO_ENABLE_FAULT_RESET_PULSE;
             } else {
-                s_enable_state = SERVO_ENABLE_SHUTDOWN;
+                s_enable_state[slave] = SERVO_ENABLE_SHUTDOWN;
             }
             break;
 
         case SERVO_ENABLE_FAULT_RESET_PULSE:
-            /*
-             * Fault Reset 只给一个短脉冲，不要一直保持 0x0080。
-             */
-            output1s->ControlWord = CIA402_CW_FAULT_RESET;
-            s_enable_state = SERVO_ENABLE_WAIT_FAULT_CLEAR;
-            s_enable_wait_count = 0U;
+            /* Fault Reset只保持一个PDO周期。 */
+            output->ControlWord = CIA402_CW_FAULT_RESET;
+            s_enable_state[slave] = SERVO_ENABLE_WAIT_FAULT_CLEAR;
+            s_enable_wait_count[slave] = 0U;
             break;
 
         case SERVO_ENABLE_WAIT_FAULT_CLEAR:
-            /*
-             * 复位后先回 0，等待故障位清除。
-             */
-            output1s->ControlWord = CIA402_CW_DISABLE_VOLTAGE;
+            output->ControlWord = CIA402_CW_DISABLE_VOLTAGE;
 
             if ((status_word & CIA402_SW_FAULT_MASK) != CIA402_SW_FAULT) {
-                s_enable_state = SERVO_ENABLE_SHUTDOWN;
-                s_enable_wait_count = 0U;
-            } else if (++s_enable_wait_count > 500U) {
-                s_enable_state = SERVO_ENABLE_FAILED;
+                s_enable_state[slave] = SERVO_ENABLE_SHUTDOWN;
+                s_enable_wait_count[slave] = 0U;
+            } else if (++s_enable_wait_count[slave] > 500U) {
+                s_enable_state[slave] = SERVO_ENABLE_FAILED;
                 return -1;
             }
             break;
 
         case SERVO_ENABLE_SHUTDOWN:
-            output1s->ControlWord = CIA402_CW_SHUTDOWN;
+            output->ControlWord = CIA402_CW_SHUTDOWN;
 
             if (status_state == CIA402_SW_READY_TO_SWITCH_ON) {
-                s_enable_state = SERVO_ENABLE_SWITCH_ON;
-                s_enable_wait_count = 0U;
-            } else if (++s_enable_wait_count > 1000U) {
-                s_enable_state = SERVO_ENABLE_FAILED;
+                s_enable_state[slave] = SERVO_ENABLE_SWITCH_ON;
+                s_enable_wait_count[slave] = 0U;
+            } else if (++s_enable_wait_count[slave] > 1000U) {
+                s_enable_state[slave] = SERVO_ENABLE_FAILED;
                 return -1;
             }
             break;
 
         case SERVO_ENABLE_SWITCH_ON:
-            output1s->ControlWord = CIA402_CW_SWITCH_ON; /* 保持0x0007 */
+            output->ControlWord = CIA402_CW_SWITCH_ON;
 
             if (status_state == CIA402_SW_SWITCHED_ON) {
-                /* 在0x000F使能之前，先锁定当前位置 */
-                s_servo_enable_hold_pos = input1s->CurrentPosition;
-                output1s->TargetPos = s_servo_enable_hold_pos;
-                output1s->TargetVelocity = 0;
-                output1s->OpModeSet = 8;
+                s_servo_enable_hold_pos[slave] = input->CurrentPosition;
+                output->TargetPos = s_servo_enable_hold_pos[slave];
+                output->TargetVelocity = 0;
+                if (op_mode != 0) {
+                    output->OpModeSet = op_mode;
+                }
 
-                s_enable_wait_count = 0U;
-                s_enable_state = SERVO_ENABLE_CSP_PREPARE;
+                s_enable_wait_count[slave] = 0U;
+                s_enable_state[slave] = SERVO_ENABLE_CSP_PREPARE;
+            } else if (++s_enable_wait_count[slave] > 1000U) {
+                s_enable_state[slave] = SERVO_ENABLE_FAILED;
+                return -1;
             }
             break;
 
         case SERVO_ENABLE_CSP_PREPARE:
             /*
-             * 仍保持0x0007，不输出转矩。
-             * 连续发送几帧当前位置，确保驱动器已收到安全目标。
+             * 保持0x0007并连续发送当前位置，确认CSP模式后再输出0x000F。
              */
-            output1s->ControlWord = CIA402_CW_SWITCH_ON;
-            output1s->OpModeSet = 8;
+            output->ControlWord = CIA402_CW_SWITCH_ON;
+            if (op_mode != 0) {
+                output->OpModeSet = op_mode;
+            }
+            s_servo_enable_hold_pos[slave] = input->CurrentPosition;
+            output->TargetPos = s_servo_enable_hold_pos[slave];
+            output->TargetVelocity = 0;
+            s_enable_wait_count[slave]++;
 
-            s_servo_enable_hold_pos = input1s->CurrentPosition;
-            output1s->TargetPos = s_servo_enable_hold_pos;
-            output1s->TargetVelocity = 0;
-
-            if ((input1s->OpModeNow == 8) &&
-                (++s_enable_wait_count >= 5U)) {
-                s_enable_wait_count = 0U;
-                s_enable_state = SERVO_ENABLE_ENABLE_OPERATION;
+            if (((op_mode == 0) || (input->OpModeNow == op_mode)) &&
+                (s_enable_wait_count[slave] >= 5U)) {
+                s_enable_wait_count[slave] = 0U;
+                s_enable_state[slave] = SERVO_ENABLE_ENABLE_OPERATION;
+            } else if (s_enable_wait_count[slave] > 1000U) {
+                s_enable_state[slave] = SERVO_ENABLE_FAILED;
+                return -1;
             }
             break;
 
         case SERVO_ENABLE_ENABLE_OPERATION:
-            /*
-             * 第一次发送0x000F时，目标位置已经提前发送了至少5个周期。
-             */
-            output1s->TargetPos = s_servo_enable_hold_pos;
-            output1s->TargetVelocity = 0;
-            output1s->ControlWord = CIA402_CW_ENABLE_OPERATION;
+            output->TargetPos = s_servo_enable_hold_pos[slave];
+            output->TargetVelocity = 0;
+            output->ControlWord = CIA402_CW_ENABLE_OPERATION;
 
-            if (status_state == CIA402_SW_OPERATION_ENABLED) {
-                s_enable_state = SERVO_ENABLE_DONE;
-                s_enable_wait_count = 0U;
-                return 1;
+            if (++s_enable_wait_count[slave] > 1000U) {
+                s_enable_state[slave] = SERVO_ENABLE_FAILED;
+                return -1;
             }
             break;
 
         case SERVO_ENABLE_DONE:
-            output1s->ControlWord = CIA402_CW_ENABLE_OPERATION;
-            return 1;
+            /*
+             * 状态字已离开Operation Enabled，先撤销控制字并重新进入状态机。
+             */
+            output->ControlWord = CIA402_CW_DISABLE_VOLTAGE;
+            s_enable_state[slave] = SERVO_ENABLE_IDLE;
+            s_enable_wait_count[slave] = 0U;
+            break;
 
         case SERVO_ENABLE_FAILED:
         default:
-            output1s->ControlWord = CIA402_CW_DISABLE_VOLTAGE;
+            output->ControlWord = CIA402_CW_DISABLE_VOLTAGE;
             return -1;
     }
 
     return 0;
+}
+
+/*
+ * 推进全部轴的CiA402状态机。
+ * 参数op_mode：写入所有轴的运行模式，8表示CSP。
+ * 返回值：全部轴使能返回1；仍有轴使能中返回0；任一轴失败返回-1。
+ */
+static int ethercat_servo_all_axes_enable_process(int8 op_mode) {
+    uint16_t slave;
+    int result;
+    int all_enabled = 1;
+    int any_failed = 0;
+
+    if (s_axis_count == 0U) {
+        return -1;
+    }
+
+    for (slave = 1U; slave <= s_axis_count; slave++) {
+        result = ethercat_servo_enable_process(slave, op_mode);
+        s_enable_result[slave] = (int8_t) result;
+
+        if (result < 0) {
+            any_failed = 1;
+        } else if (result == 0) {
+            all_enabled = 0;
+        }
+    }
+
+    if (any_failed != 0) {
+        return -1;
+    }
+
+    return all_enabled;
 }
 
 
@@ -519,42 +948,52 @@ static int ethercat_servo_enable_process(int8 op_mode) {
  */
 static void ethercat_pdo_monitor_log_task(void *pvParameters) {
     ethercat_pdo_monitor_t mon;
+    uint16_t slave;
+    int8_t enable_result;
+    servo_enable_state_t enable_state;
 
     (void) pvParameters;
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
 
-        taskENTER_CRITICAL();
-        mon = s_pdo_monitor;
-        taskEXIT_CRITICAL();
+        for (slave = 1U; slave <= s_axis_count; slave++) {
+            taskENTER_CRITICAL();
+            mon = s_pdo_monitor[slave];
+            enable_state = s_enable_state[slave];
+            enable_result = s_enable_result[slave];
+            taskEXIT_CRITICAL();
 
-        USR_LOG_INFO("PDO monitor: ok=%d cyc=%lu good=%lu bad=%lu wkc=%d/%d state=0x%04x "
-                     "status=0x%04x pos=%ld dpos=%ld mode=%d ctrl=0x%04x target=%ld.",
-                     mon.pdo_ok,
-                     (unsigned long) mon.cycle_count,
-                     (unsigned long) mon.good_count,
-                     (unsigned long) mon.bad_count,
-                     mon.wkc,
-                     mon.expected_wkc,
-                     mon.state,
-                     mon.status_word,
-                     (long) mon.position,
-                     (long) mon.position_delta,
-                     mon.mode,
-                     mon.control_word,
-                     (long) mon.target_pos);
+            USR_LOG_INFO("[Axis %u][PDO] enable=%d step=%d ok=%d cyc=%lu good=%lu bad=%lu "
+                         "wkc=%d/%d ec=0x%04x status=0x%04x ctrl=0x%04x "
+                         "mode=%d pos=%ld dpos=%ld target=%ld.",
+                         (unsigned int) slave,
+                         (int) enable_result,
+                         (int) enable_state,
+                         mon.pdo_ok,
+                         (unsigned long) mon.cycle_count,
+                         (unsigned long) mon.good_count,
+                         (unsigned long) mon.bad_count,
+                         mon.wkc,
+                         mon.expected_wkc,
+                         mon.state,
+                         mon.status_word,
+                         mon.control_word,
+                         mon.mode,
+                         (long) mon.position,
+                         (long) mon.position_delta,
+                         (long) mon.target_pos);
+        }
     }
 }
 
 int ethercat_master_pdo_process_check(int wkc) {
-    static int32 last_position; // 保存上一周期的位置
-    static uint16 last_status_word; // 保存上一周期的状态字
-    static int8 last_mode; // 保存上一周期的模式
-    static uint8_t has_last_sample; // 是否已经有上一周期样本
-
     int pdo_ok = 1;
-    int32 position_delta = 0;
+    uint16_t slave;
+    PDO_Input *input;
+    PDO_Output *output;
+    int32 position_delta;
+    uint8_t had_last_sample;
 
     /* 保存最近一次 WKC，供其他任务读取 */
     s_last_wkc = wkc;
@@ -564,22 +1003,16 @@ int ethercat_master_pdo_process_check(int wkc) {
         s_expected_wkc = (ec_group[0].outputsWKC * 2) + ec_group[0].inputsWKC;
     }
 
-    /*
-     * PDO 指针未准备好，说明还没有完成 OP 后的 inputs/outputs 指针绑定。
-     * 这种情况下不能访问 input1s/output1s，否则可能 HardFault。
-     */
-    if ((input1s == NULL) || (output1s == NULL)) {
-        pdo_ok = 0;
-
-        taskENTER_CRITICAL();
-        s_pdo_monitor.cycle_count++;
-        s_pdo_monitor.bad_count++;
-        s_pdo_monitor.wkc = wkc;
-        s_pdo_monitor.expected_wkc = s_expected_wkc;
-        s_pdo_monitor.pdo_ok = pdo_ok;
-        taskEXIT_CRITICAL();
-
+    if (s_axis_count == 0U) {
         return 0;
+    }
+
+    for (slave = 1U; slave <= s_axis_count; slave++) {
+        if ((s_axis_inputs[slave] == NULL) ||
+            (s_axis_outputs[slave] == NULL)) {
+            pdo_ok = 0;
+            break;
+        }
     }
 
     /*
@@ -594,75 +1027,69 @@ int ethercat_master_pdo_process_check(int wkc) {
      * 判断 EtherCAT 状态是否仍然是 OP。
      * 0x0008 = EC_STATE_OPERATIONAL。
      */
-    if (ec_slave[0].state != EC_STATE_OPERATIONAL) {
+    if (0U == ethercat_master_all_slaves_in_state(EC_STATE_OPERATIONAL)) {
         pdo_ok = 0;
     }
 
-    /*
-     * 计算当前位置变化量。
-     * 如果手动转动电机头，position_delta 应该会出现明显变化。
-     */
-    if (has_last_sample) {
-        position_delta = input1s->CurrentPosition - last_position;
-
-        /*
-         * 如果位置、状态字、模式都没有变化，认为输入数据连续未变化。
-         * 注意：电机静止时 unchanged 增加是正常现象，不一定是错误。
-         */
-        if ((input1s->CurrentPosition == last_position) &&
-            (input1s->StatusWord == last_status_word) &&
-            (input1s->OpModeNow == last_mode)) {
-            s_pdo_monitor.unchanged_count++;
-        } else {
-            s_pdo_monitor.unchanged_count = 0U;
+    for (slave = 1U; slave <= s_axis_count; slave++) {
+        input = s_axis_inputs[slave];
+        output = s_axis_outputs[slave];
+        if ((input == NULL) || (output == NULL)) {
+            continue;
         }
-    } else {
-        has_last_sample = 1U;
+
+        position_delta = 0;
+        had_last_sample = s_has_last_sample[slave];
+        if (had_last_sample != 0U) {
+            position_delta =
+                input->CurrentPosition - s_last_position[slave];
+        } else {
+            s_has_last_sample[slave] = 1U;
+        }
+
+        taskENTER_CRITICAL();
+        s_pdo_monitor[slave].cycle_count++;
+        s_pdo_monitor[slave].wkc = wkc;
+        s_pdo_monitor[slave].expected_wkc = s_expected_wkc;
+        s_pdo_monitor[slave].pdo_ok = pdo_ok;
+
+        if (pdo_ok != 0) {
+            s_pdo_monitor[slave].good_count++;
+        } else {
+            s_pdo_monitor[slave].bad_count++;
+        }
+
+        if ((had_last_sample != 0U) &&
+            (input->CurrentPosition == s_last_position[slave]) &&
+            (input->StatusWord == s_last_status_word[slave]) &&
+            (input->OpModeNow == s_last_mode[slave])) {
+            s_pdo_monitor[slave].unchanged_count++;
+        } else {
+            s_pdo_monitor[slave].unchanged_count = 0U;
+        }
+
+        s_pdo_monitor[slave].state = ec_slave[slave].state;
+        s_pdo_monitor[slave].status_word = input->StatusWord;
+        s_pdo_monitor[slave].position = input->CurrentPosition;
+        s_pdo_monitor[slave].position_delta = position_delta;
+        s_pdo_monitor[slave].mode = input->OpModeNow;
+        s_pdo_monitor[slave].control_word = output->ControlWord;
+        s_pdo_monitor[slave].target_pos = output->TargetPos;
+        taskEXIT_CRITICAL();
+
+        s_last_position[slave] = input->CurrentPosition;
+        s_last_status_word[slave] = input->StatusWord;
+        s_last_mode[slave] = input->OpModeNow;
     }
 
-    /* 更新上一周期样本 */
-    last_position = input1s->CurrentPosition;
-    last_status_word = input1s->StatusWord;
-    last_mode = input1s->OpModeNow;
-
-    /*
-     * 进入临界区，防止 PDO 周期任务正在更新时，
-     * 另一个打印任务同时读取 s_pdo_monitor，导致数据读到一半。
-     */
-    taskENTER_CRITICAL();
-
-    s_pdo_monitor.cycle_count++;
-    s_pdo_monitor.wkc = wkc;
-    s_pdo_monitor.expected_wkc = s_expected_wkc;
-    s_pdo_monitor.pdo_ok = pdo_ok;
-
-    if (pdo_ok) {
-        s_pdo_monitor.good_count++;
-    } else {
-        s_pdo_monitor.bad_count++;
+    /* 公共状态接口继续使用1号轴，保持现有上位机接口兼容。 */
+    if ((s_axis_inputs[1] != NULL) && (s_axis_outputs[1] != NULL)) {
+        ethercat_app_master_status_update(wkc,
+                                          s_expected_wkc,
+                                          ec_slave[1].state,
+                                          s_axis_inputs[1]->StatusWord,
+                                          s_axis_outputs[1]->ControlWord);
     }
-
-    /*
-     * 保存本周期关键 PDO 数据。
-     * 打印任务只读取这些缓存值，不直接访问 SOEM 收发函数。
-     */
-    s_pdo_monitor.state = ec_slave[0].state;
-    s_pdo_monitor.status_word = input1s->StatusWord;
-    s_pdo_monitor.position = input1s->CurrentPosition;
-    s_pdo_monitor.position_delta = position_delta;
-    s_pdo_monitor.mode = input1s->OpModeNow;
-    s_pdo_monitor.control_word = output1s->ControlWord;
-    s_pdo_monitor.target_pos = output1s->TargetPos;
-
-    taskEXIT_CRITICAL();
-    ethercat_app_master_status_update(wkc,
-                                      s_expected_wkc,
-                                      ec_slave[0].state,
-                                      input1s->StatusWord,
-                                      output1s->ControlWord);
-    // if (!pdo_ok) {
-    //     ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_FAULT);
-    // }
 
     return pdo_ok;
 }
