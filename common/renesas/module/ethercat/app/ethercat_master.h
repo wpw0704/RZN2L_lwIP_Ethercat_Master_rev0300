@@ -88,6 +88,39 @@ typedef struct {
 extern PDO_Input *input1s;
 extern PDO_Output *output1s;
 
+/*
+ * 获取已绑定的轴数量。
+ * 返回值：轴数量；PDO尚未绑定时返回0。
+ */
+uint16_t ethercat_master_axis_count_get(void);
+
+/*
+ * 获取指定SOEM从站号的RxPDO输出指针。
+ * 参数slave：从站号，范围为1..ethercat_master_axis_count_get()。
+ * 返回值：有效PDO指针；编号越界或尚未绑定时返回NULL。
+ */
+PDO_Output *ethercat_master_axis_output_get(uint16_t slave);
+
+/*
+ * 获取指定SOEM从站号的TxPDO输入指针。
+ * 参数slave：从站号，范围为1..ethercat_master_axis_count_get()。
+ * 返回值：有效PDO指针；编号越界或尚未绑定时返回NULL。
+ */
+PDO_Input *ethercat_master_axis_input_get(uint16_t slave);
+
+/*
+ * 查询指定轴是否进入CiA402 Operation Enabled。
+ * 参数slave：从站号，范围为1..ethercat_master_axis_count_get()。
+ * 返回值：1表示已使能；0表示未使能；-1表示编号或PDO无效。
+ */
+int ethercat_master_axis_operation_enabled_get(uint16_t slave);
+
+/*
+ * 查询全部已绑定轴是否进入CiA402 Operation Enabled。
+ * 返回值：1表示全部使能；0表示至少一轴未使能；-1表示尚未绑定轴。
+ */
+int ethercat_master_all_axes_operation_enabled_get(void);
+
 usr_err_t ethercat_master_scan_start(void);
 int ethercat_master_expected_wkc_get(void);
 int ethercat_master_last_wkc_get(void);
