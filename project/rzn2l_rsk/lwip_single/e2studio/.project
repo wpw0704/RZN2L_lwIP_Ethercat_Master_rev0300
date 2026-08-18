@@ -104,6 +104,11 @@
 			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/application/lwip_port_main_api.h</locationURI>
 		</link>
 		<link>
+			<name>src/renesas/module/crc_L16</name>
+			<type>2</type>
+			<locationURI>virtual:/virtual</locationURI>
+		</link>
+		<link>
 			<name>src/renesas/module/ether_netif</name>
 			<type>2</type>
 			<locationURI>virtual:/virtual</locationURI>
@@ -115,6 +120,11 @@
 		</link>
 		<link>
 			<name>src/renesas/module/gpt</name>
+			<type>2</type>
+			<locationURI>virtual:/virtual</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/io</name>
 			<type>2</type>
 			<locationURI>virtual:/virtual</locationURI>
 		</link>
@@ -162,6 +172,16 @@
 			<name>src/oss/lwip/src/netif</name>
 			<type>2</type>
 			<locationURI>virtual:/virtual</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/crc_L16/crc_L16.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/crc_L16/crc_L16.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/crc_L16/crc_L16.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/crc_L16/crc_L16.h</locationURI>
 		</link>
 		<link>
 			<name>src/renesas/module/ether_netif/um_ether_netif.c</name>
@@ -237,6 +257,16 @@
 			<name>src/renesas/module/gpt/gpt.h</name>
 			<type>1</type>
 			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/gpt/gpt.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/io/io.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/io/io.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/io/io.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/io/io.h</locationURI>
 		</link>
 		<link>
 			<name>src/renesas/module/lwip_port/lwip_osal</name>
@@ -567,6 +597,16 @@
 			<name>src/renesas/module/ethercat/app/ethercat_master.h</name>
 			<type>1</type>
 			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/app/ethercat_master.h</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/app/ethercat_motion.c</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/app/ethercat_motion.c</locationURI>
+		</link>
+		<link>
+			<name>src/renesas/module/ethercat/app/ethercat_motion.h</name>
+			<type>1</type>
+			<locationURI>PARENT-4-PROJECT_LOC/common/renesas/module/ethercat/app/ethercat_motion.h</locationURI>
 		</link>
 		<link>
 			<name>src/renesas/module/ethercat/app/ethercat_port_cfg.h</name>

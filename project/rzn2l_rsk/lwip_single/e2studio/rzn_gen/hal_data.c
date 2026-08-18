@@ -1,6 +1,14 @@
 /* generated HAL source file - do not edit */
 #include "hal_data.h"
 
+crc_instance_ctrl_t g_crc0_ctrl;
+const crc_cfg_t g_crc0_cfg =
+{ .channel = 0, .polynomial = CRC_POLYNOMIAL_CRC_16, .bit_order = CRC_BIT_ORDER_LMS_LSB, .snoop_address = 0, .p_extend =
+          NULL, };
+
+/* Instance structure to use this module. */
+const crc_instance_t g_crc0 =
+{ .p_ctrl = &g_crc0_ctrl, .p_cfg = &g_crc0_cfg, .p_api = &g_crc_on_crc };
 gpt_instance_ctrl_t g_timer0_ctrl;
 #if 0
 const gpt_extended_pwm_cfg_t g_timer0_pwm_extend =

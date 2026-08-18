@@ -29,6 +29,20 @@
 #define CIA402_SW_SWITCHED_ON           (0x0023U)  // Switched on
 #define CIA402_SW_OPERATION_ENABLED     (0x0027U)  // Operation enabled
 
+// #define ETHERCAT_ZERO_HM_MODE              (6)
+// #define ETHERCAT_ZERO_CSP_MODE             (8)
+// #define ETHERCAT_ZERO_TIMEOUT_CYCLES       (500U)
+// #define ETHERCAT_ZERO_FEEDBACK_CYCLES      (5U)
+//
+// typedef enum {
+//     ZERO_POSITION_IDLE = 0,
+//     ZERO_POSITION_REQUESTED,
+//     ZERO_POSITION_WAIT_HM,
+//     ZERO_POSITION_WRITE_SDO,
+//     ZERO_POSITION_WAIT_FEEDBACK,
+//     ZERO_POSITION_WAIT_CSP,
+// } zero_position_state_t;
+
 typedef enum {
     SERVO_ENABLE_IDLE = 0,              // 初始状态，根据状态字决定走故障复位还是正常使能
     SERVO_ENABLE_FAULT_RESET_PULSE,     // 输出一次 0x0080 故障复位脉冲
@@ -40,6 +54,11 @@ typedef enum {
     SERVO_ENABLE_DONE,                  // 已使能，持续保持 0x000F
     SERVO_ENABLE_FAILED,                // 使能超时或失败
 } servo_enable_state_t;
+
+typedef enum {
+    IDLE_STATE = 0,              // 空闲状态
+    SET_0RIGIN,                 // 设置原点
+} control_state_t;
 
 PACKED_BEGIN
 typedef struct PACKED {
@@ -124,5 +143,22 @@ int ethercat_master_all_axes_operation_enabled_get(void);
 usr_err_t ethercat_master_scan_start(void);
 int ethercat_master_expected_wkc_get(void);
 int ethercat_master_last_wkc_get(void);
+int write16(uint16 slave, uint16 index, uint8 subindex, int value);
+int write16_test(uint16 slave, uint16 index, uint8 subindex, int value);
+
+/*
+ * 请求1号轴以当前位置设置驱动器原点。
+ *
+ * 返回1：请求成功；
+ * 返回0：已有置零操作；
+ * 返回-1：PDO尚未准备好。
+ */
+int ethercat_master_zero_position_request(void);
+
+/**
+ * @brief 判断是否符合使能条件
+ * @return 1 为使能 0 为未使能
+ */
+uint8_t servo_enable_allowed(void);
 
 #endif

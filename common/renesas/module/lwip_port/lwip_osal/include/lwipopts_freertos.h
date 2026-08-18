@@ -38,7 +38,7 @@
 /* tcpip_thread should run on HIGH priority */
 #define TCPIP_THREAD_NAME             "lwIP"
 #define TCPIP_THREAD_STACKSIZE        ( 512 * 4 )
-#define TCPIP_THREAD_PRIO             tskIDLE_PRIORITY + 5
+#define TCPIP_THREAD_PRIO             tskIDLE_PRIORITY + 7
 
 //#define TCPIP_MBOX_SIZE               16
 #define DEFAULT_RAW_RECVMBOX_SIZE     16

@@ -22,6 +22,7 @@
 #include "um_lwip_port_internal.h"
 #include "um_ether_netif_api.h"
 #include "um_ether_netif.h"
+#include "ethercat_port_cfg.h"
 
 
 #include "FreeRTOS.h"
@@ -31,9 +32,6 @@
 #include "lwip/err.h"
 
 #include <string.h>
-
-#define LWIP_ETHERNET_PORT_NUMBER  (2U)
-#define LWIP_ETHERNET_PORT_MASK    ETHER_NETIF_CFG_PORT_BIT(LWIP_ETHERNET_PORT_NUMBER)
 
 #define ETHERNET_HEADER_SIZE       (14U)
 #define ETHER_TYPE_IPV4            (0x0800U)
@@ -187,10 +185,7 @@ usr_err_t um_lwip_port_ether_netif_send(lwip_port_ether_netif_ctrl_t *const p_ct
                                         ether_netif_frame_t *const p_packet_buffer) {
     usr_err_t usr_err;
 
-    // /** lwIP uses port2 only; EtherCAT master uses port1. */
-    // p_packet_buffer->port = ETHER_NETIF_CFG_PORT_BIT(0);
-
-    /* 所有lwIP发送报文都从port2发出。 */
+    /* 所有 lwIP 发送报文都从配置的 lwIP 端口发出。 */
     p_packet_buffer->port = LWIP_ETHERNET_PORT_MASK;
 
     /** Send the frame */
@@ -223,8 +218,7 @@ usr_err_t um_lwip_port_ether_netif_get_local_mac_address(
 /*
  * Ethernet 共用接收回调。
  *
- * port0：交给 lwIP；
- * port1：由 SOEM EtherCAT 回调处理。
+ * EtherCAT 与 lwIP 的物理端口由 ETHERCAT_LWIP_PORT_SWAP 配置。
  */
 static void lwip_ether_netif_callback(
     ether_netif_callback_args_t *p_args)
@@ -250,7 +244,7 @@ static void lwip_ether_netif_callback(
 
     /*
      * 底层 LINK_UP 表示任意端口连接。
-     * lwIP 只使用 port0/por2，因此重新检查 port0/por2 的状态。
+     * lwIP 只使用配置的 lwIP 端口，因此重新检查该端口的状态。
      */
     if ((ETHER_NETIF_CALLBACK_EVENT_LINK_UP == p_args->event) ||
         (ETHER_NETIF_CALLBACK_EVENT_LINK_DOWN == p_args->event))
@@ -281,7 +275,7 @@ static void lwip_ether_netif_callback(
 
     p_frame = p_args->p_frame_packet;
 
-    /* 明确过滤：lwIP 只处理从 port0/por2 收到的帧。 */
+    /* 明确过滤：lwIP 只处理从配置的 lwIP 端口收到的帧。 */
     if ((p_frame->port != ETHER_NETIF_CFG_PORT_RECV_PORT_ANY) &&
         (0U == (p_frame->port & LWIP_ETHERNET_PORT_MASK)))
     {

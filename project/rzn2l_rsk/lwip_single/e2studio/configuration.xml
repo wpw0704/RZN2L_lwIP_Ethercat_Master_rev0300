@@ -711,6 +711,10 @@
       <description>General PWM Timer</description>
       <originalPack>Renesas.RZN.3.0.0.pack</originalPack>
     </component>
+    <component apiversion="" class="HAL Drivers" condition="" group="all" subgroup="r_crc" variant="" vendor="Renesas" version="3.0.0">
+      <description>Cyclic Redundancy Check</description>
+      <originalPack>Renesas.RZN.3.0.0.pack</originalPack>
+    </component>
   </raComponentSelection>
   <raElcConfiguration/>
   <raIcuConfiguration/>
@@ -798,7 +802,7 @@
     <module id="module.driver.ether_switch_on_ether_switch.1062036899">
       <property id="module.driver.ethsw.name" value="g_ethsw0"/>
       <property id="module.driver.ethsw.channel" value="module.driver.ethsw.channel.0"/>
-      <property id="module.driver.ethsw.specific_tag" value="module.driver.ethsw.specific_tag.0"/>
+      <property id="module.driver.ethsw.specific_tag" value="module.driver.ethsw.specific_tag.1"/>
       <property id="module.driver.ethsw.specific_tag_id" value="0xE001"/>
       <property id="module.driver.ethsw.phylink" value="module.driver.ethsw.phylink.disable"/>
       <property id="module.driver.ethsw.priority" value="board.icu.common.irq.priority12"/>
@@ -874,31 +878,6 @@
     </module>
     <module id="module.driver.ether_selector_on_ether_selector.1520214221">
       <property id="module.driver.ether_selector.name" value="g_ether_selector0"/>
-      <property id="module.driver.ether_selector.channel" value="module.driver.ether_selector.channel.0"/>
-      <property id="module.driver.ether_selector.phylink" value="module.driver.ether_selector.phylink.low"/>
-      <property id="module.driver.ether_selector.interface_type" value="module.driver.ether_selector.interface_type.rgmii"/>
-      <property id="module.driver.ether_selector.speed" value="module.driver.ether_selector.speed.bps1000m"/>
-      <property id="module.driver.ether_selector.duplex" value="module.driver.ether_selector.duplex.full"/>
-      <property id="module.driver.ether_selector.ref_clock" value="module.driver.ether_selector.ref_clock.input"/>
-    </module>
-    <module id="module.driver.ether_phy_on_ether_phy.705987880">
-      <property id="module.driver.ether_phy.name" value="g_ether_phy2"/>
-      <property id="module.driver.ether_phy.channel" value="module.driver.ether_phy.channel.0"/>
-      <property id="module.driver.ether_phy.phy_lsi_address" value="3"/>
-      <property id="module.driver.ether_phy.phy_reset_wait_time" value="0x00020000"/>
-      <property id="module.driver.ether_phy.flow_control" value="module.driver.ether_phy.flow_control.disable"/>
-      <property id="module.driver.ether_phy.port_type" value="module.driver.ether_phy.port_type.0"/>
-      <property id="module.driver.ether_phy.phy_lsi_type" value="module.driver.ether_phy.phy_lsi_type.custom"/>
-      <property id="module.driver.ether_phy.target_init" value="phy_8211"/>
-      <property id="module.driver.ether_phy.mdio_type" value="module.driver.ether_phy.mdio_type.0"/>
-      <property id="module.driver.ether_phy.auto_negotiation" value="module.driver.ether_phy.auto_negotiation.1"/>
-      <property id="module.driver.ether_phy.bps" value="module.driver.ether_phy.bps.1"/>
-      <property id="module.driver.ether_phy.duplex" value="module.driver.ether_phy.duplex.1"/>
-      <property id="module.driver.ether_phy.reset_pin" value="enum_mcu.port.external.pin.p13_4"/>
-      <property id="module.driver.ether_phy.reset_time" value="15000"/>
-    </module>
-    <module id="module.driver.ether_selector_on_ether_selector.363776545">
-      <property id="module.driver.ether_selector.name" value="g_ether_selector2"/>
       <property id="module.driver.ether_selector.channel" value="module.driver.ether_selector.channel.0"/>
       <property id="module.driver.ether_selector.phylink" value="module.driver.ether_selector.phylink.low"/>
       <property id="module.driver.ether_selector.interface_type" value="module.driver.ether_selector.interface_type.rgmii"/>
@@ -999,11 +978,44 @@
       <property id="module.driver.timer.elc_trigger_nonsafty_event_g" value="_disabled"/>
       <property id="module.driver.timer.elc_trigger_nonsafty_event_h" value="_disabled"/>
     </module>
+    <module id="module.driver.ether_phy_on_ether_phy.21816080">
+      <property id="module.driver.ether_phy.name" value="g_ether_phy2"/>
+      <property id="module.driver.ether_phy.channel" value="module.driver.ether_phy.channel.0"/>
+      <property id="module.driver.ether_phy.phy_lsi_address" value="3"/>
+      <property id="module.driver.ether_phy.phy_reset_wait_time" value="0x00020000"/>
+      <property id="module.driver.ether_phy.flow_control" value="module.driver.ether_phy.flow_control.disable"/>
+      <property id="module.driver.ether_phy.port_type" value="module.driver.ether_phy.port_type.0"/>
+      <property id="module.driver.ether_phy.phy_lsi_type" value="module.driver.ether_phy.phy_lsi_type.custom"/>
+      <property id="module.driver.ether_phy.target_init" value="phy_8211"/>
+      <property id="module.driver.ether_phy.mdio_type" value="module.driver.ether_phy.mdio_type.0"/>
+      <property id="module.driver.ether_phy.auto_negotiation" value="module.driver.ether_phy.auto_negotiation.1"/>
+      <property id="module.driver.ether_phy.bps" value="module.driver.ether_phy.bps.3"/>
+      <property id="module.driver.ether_phy.duplex" value="module.driver.ether_phy.duplex.1"/>
+      <property id="module.driver.ether_phy.reset_pin" value="enum_mcu.port.external.pin.p13_4"/>
+      <property id="module.driver.ether_phy.reset_time" value="15000"/>
+    </module>
+    <module id="module.driver.ether_selector_on_ether_selector.115614817">
+      <property id="module.driver.ether_selector.name" value="g_ether_selector2"/>
+      <property id="module.driver.ether_selector.channel" value="module.driver.ether_selector.channel.0"/>
+      <property id="module.driver.ether_selector.phylink" value="module.driver.ether_selector.phylink.low"/>
+      <property id="module.driver.ether_selector.interface_type" value="module.driver.ether_selector.interface_type.rgmii"/>
+      <property id="module.driver.ether_selector.speed" value="module.driver.ether_selector.speed.bps1000m"/>
+      <property id="module.driver.ether_selector.duplex" value="module.driver.ether_selector.duplex.full"/>
+      <property id="module.driver.ether_selector.ref_clock" value="module.driver.ether_selector.ref_clock.input"/>
+    </module>
+    <module id="module.driver.crc_on_crc.1016613977">
+      <property id="module.driver.crc.name" value="g_crc0"/>
+      <property id="module.driver.crc.channel" value="0"/>
+      <property id="module.driver.crc.crc_polynomial" value="module.driver.crc.crc_polynomial.gps_crc_16"/>
+      <property id="module.driver.crc.crc_bit_order" value="module.driver.crc.crc_polynomial.lms_lsb"/>
+      <property id="module.driver.crc.snoop_address" value="module.driver.crc.snoop_address.not_supported"/>
+    </module>
     <context id="_hal.0">
       <stack module="module.driver.ioport_on_ioport.0"/>
       <stack module="module.bsp.memory_config.0"/>
       <stack module="module.middleware.rm_freertos_port.0"/>
       <stack module="module.driver.timer_on_gpt.2125777185"/>
+      <stack module="module.driver.crc_on_crc.1016613977"/>
     </context>
     <context id="rtos.awsfreertos.thread.733488705">
       <property id="_symbol" value="main_thread"/>
@@ -1020,8 +1032,8 @@
         <stack module="module.driver.ether_phy_on_ether_phy.789493329" requires="module.driver.ether.requires.ether_phy1">
           <stack module="module.driver.ether_selector_on_ether_selector.250220238" requires="module.driver.ether.requires.ether_selector"/>
         </stack>
-        <stack module="module.driver.ether_phy_on_ether_phy.705987880" requires="module.driver.ether.requires.ether_phy2">
-          <stack module="module.driver.ether_selector_on_ether_selector.363776545" requires="module.driver.ether.requires.ether_selector"/>
+        <stack module="module.driver.ether_phy_on_ether_phy.21816080" requires="module.driver.ether.requires.ether_phy2">
+          <stack module="module.driver.ether_selector_on_ether_selector.115614817" requires="module.driver.ether.requires.ether_selector"/>
         </stack>
         <stack module="module.driver.ether_switch_on_ether_switch.1062036899" requires="module.driver.ether.requires.ethsw"/>
       </stack>
@@ -1042,6 +1054,9 @@
     </config>
     <config id="config.driver.ioport">
       <property id="config.driver.ioport.checking" value="config.driver.ioport.checking.system"/>
+    </config>
+    <config id="config.driver.crc">
+      <property id="config.driver.crc.checking" value="config.driver.crc.checking.system"/>
     </config>
     <config id="config.driver.ether">
       <property id="config.driver.ether.param_checking_enable" value="config.driver.ether.param_checking_enable.bsp"/>
@@ -1206,6 +1221,7 @@
     <symbolicName propertyId="p15_7.symbolic_name" value="OSPI_CS"/>
     <symbolicName propertyId="p16_0.symbolic_name" value="ORAM_CS0"/>
     <symbolicName propertyId="p16_1.symbolic_name" value="XSPI0_RESET0"/>
+    <symbolicName propertyId="p16_2.symbolic_name" value="SN595_MR"/>
     <symbolicName propertyId="p16_3.symbolic_name" value="KEY2"/>
     <symbolicName propertyId="p16_5.symbolic_name" value="UART_USB_TX"/>
     <symbolicName propertyId="p16_6.symbolic_name" value="UART_USB_RX"/>
@@ -1223,6 +1239,9 @@
     <symbolicName propertyId="p20_3.symbolic_name" value="ETH_LED1_MDV2"/>
     <symbolicName propertyId="p20_4.symbolic_name" value="ETH_LED3_MDV3"/>
     <symbolicName propertyId="p21_1.symbolic_name" value="CS"/>
+    <symbolicName propertyId="p21_5.symbolic_name" value="SN595_DATA"/>
+    <symbolicName propertyId="p21_6.symbolic_name" value="SN595_CLK"/>
+    <symbolicName propertyId="p21_7.symbolic_name" value="SN595_CS"/>
     <symbolicName propertyId="p22_1.symbolic_name" value="ETH_LED5"/>
     <symbolicName propertyId="p22_3.symbolic_name" value="LED_ORANGE"/>
     <symbolicName propertyId="p23_7.symbolic_name" value="ETH2_RXD0"/>
@@ -1274,6 +1293,7 @@
       <configSetting altId="ether_eth2.mode.rgmiimode.free" configurationId="ether_eth2.mode"/>
       <configSetting altId="ether_ethsw.ethsw_phylink0.p10_4" configurationId="ether_ethsw.ethsw_phylink0"/>
       <configSetting altId="ether_ethsw.ethsw_phylink1.p05_5" configurationId="ether_ethsw.ethsw_phylink1"/>
+      <configSetting altId="ether_ethsw.ethsw_phylink2.p00_5" configurationId="ether_ethsw.ethsw_phylink2"/>
       <configSetting altId="ether_ethsw.mode.custom_40_1.8v_41.free" configurationId="ether_ethsw.mode"/>
       <configSetting altId="ether_gmac.gmac_mdc.p08_7" configurationId="ether_gmac.gmac_mdc"/>
       <configSetting altId="ether_gmac.gmac_mdio.p09_0" configurationId="ether_gmac.gmac_mdio"/>
@@ -1297,6 +1317,8 @@
       <configSetting altId="p00_2.gpio_mode.gpio_mode_peripheral" configurationId="p00_2.gpio_mode"/>
       <configSetting altId="p00_3.ether_eth2.eth2_refclk" configurationId="p00_3"/>
       <configSetting altId="p00_3.gpio_mode.gpio_mode_peripheral" configurationId="p00_3.gpio_mode"/>
+      <configSetting altId="p00_5.ether_ethsw.ethsw_phylink2" configurationId="p00_5"/>
+      <configSetting altId="p00_5.gpio_mode.gpio_mode_peripheral" configurationId="p00_5.gpio_mode"/>
       <configSetting altId="p00_6.ether_eth2.eth2_txclk_txc" configurationId="p00_6"/>
       <configSetting altId="p00_6.gpio_speed.gpio_speed_high" configurationId="p00_6.gpio_drivecapacity"/>
       <configSetting altId="p00_6.gpio_mode.gpio_mode_peripheral" configurationId="p00_6.gpio_mode"/>
@@ -1443,6 +1465,8 @@
       <configSetting altId="p14_0.gpio_mode.gpio_mode_out.low" configurationId="p14_0.gpio_mode"/>
       <configSetting altId="p14_2.input" configurationId="p14_2"/>
       <configSetting altId="p14_2.gpio_mode.gpio_mode_in" configurationId="p14_2.gpio_mode"/>
+      <configSetting altId="p16_2.output.high" configurationId="p16_2"/>
+      <configSetting altId="p16_2.gpio_mode.gpio_mode_out.high" configurationId="p16_2.gpio_mode"/>
       <configSetting altId="p16_3.input" configurationId="p16_3"/>
       <configSetting altId="p16_3.gpio_mode.gpio_mode_in" configurationId="p16_3.gpio_mode"/>
       <configSetting altId="p16_5.sci0.txd_mosi0" configurationId="p16_5"/>
@@ -1473,6 +1497,12 @@
       <configSetting altId="p20_3.gpio_mode.gpio_mode_out.low" configurationId="p20_3.gpio_mode"/>
       <configSetting altId="p20_4.output.low" configurationId="p20_4"/>
       <configSetting altId="p20_4.gpio_mode.gpio_mode_out.low" configurationId="p20_4.gpio_mode"/>
+      <configSetting altId="p21_5.output.low" configurationId="p21_5"/>
+      <configSetting altId="p21_5.gpio_mode.gpio_mode_out.low" configurationId="p21_5.gpio_mode"/>
+      <configSetting altId="p21_6.output.low" configurationId="p21_6"/>
+      <configSetting altId="p21_6.gpio_mode.gpio_mode_out.low" configurationId="p21_6.gpio_mode"/>
+      <configSetting altId="p21_7.output.low" configurationId="p21_7"/>
+      <configSetting altId="p21_7.gpio_mode.gpio_mode_out.low" configurationId="p21_7.gpio_mode"/>
       <configSetting altId="p22_1.output.low" configurationId="p22_1"/>
       <configSetting altId="p22_1.gpio_mode.gpio_mode_out.low" configurationId="p22_1.gpio_mode"/>
       <configSetting altId="p22_3.output.low" configurationId="p22_3"/>

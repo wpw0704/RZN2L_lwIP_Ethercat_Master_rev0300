@@ -13,7 +13,7 @@
 
 #define ETHERCAT_MASTER_TASK_PRIORITY (7U)
 #define ETHERCAT_DC_SYNC0_CYCLE_NS      (2000000U)
-#define ETHERCAT_CIA402_ENABLE_ACTIVE   (1U)
+#define ETHERCAT_CIA402_ENABLE_ACTIVE   (0U)
 #define ETHERCAT_SAFE_OP_WARMUP_CYCLES  (50U)
 #define ETHERCAT_AXIS_OP_TIMEOUT_CYCLES (1000U)
 #define ETHERCAT_AXIS_OP_STABLE_CYCLES  (50U)
@@ -21,13 +21,15 @@
 #define ETHERCAT_ZERO_WKC_LIMIT         (5U)
 #define ETHERCAT_GPT_WAIT_MS            (20U)
 
+
 /*
  * SOEM过程数据映射区。
  * 当前所有从站均使用本文件定义的固定RxPDO/TxPDO结构，按SOEM最大从站数预留。
  */
 static char IOmap[EC_MAXSLAVE *
                   (sizeof(PDO_Output) + sizeof(PDO_Input))];
-
+uint8_t s_servo_enable_request = 0U;
+control_state_t current_state;
 /*
  * 现有运动模块使用1号从站的PDO。
  * 多轴扫描、配置和EtherCAT OP切换覆盖全部从站，但本次不扩展多轴运动控制。
@@ -48,6 +50,8 @@ static int32 s_last_position[EC_MAXSLAVE];
 static uint16 s_last_status_word[EC_MAXSLAVE];
 static int8 s_last_mode[EC_MAXSLAVE];
 static uint8_t s_has_last_sample[EC_MAXSLAVE];
+
+extern motion_control_t s_control;
 
 /* WKC 统计：expected 是理论期望值，last 是最近一次 PDO 返回值 */
 static int s_expected_wkc;
@@ -123,6 +127,7 @@ int write16(uint16 slave, uint16 index, uint8 subindex, int value) {
     uint16 temp = value;
 
     int rtn = ec_SDOwrite(slave, index, subindex, FALSE, sizeof(temp), &temp, EC_TIMEOUTRXM * 20);
+    // int rtn = ec_SDOwrite(slave, index, subindex, FALSE, sizeof(temp), &temp, EC_TIMEOUTRXM);
 
     if (rtn == 0) {
         printf("[Axis %u][SDO16] write failed: index=0x%04x sub=0x%02x\r\n",
@@ -142,7 +147,8 @@ int write16(uint16 slave, uint16 index, uint8 subindex, int value) {
 int write32(uint16 slave, uint16 index, uint8 subindex, int value) {
     uint32 temp = value;
 
-    int rtn = ec_SDOwrite(slave, index, subindex, FALSE, sizeof(temp), &temp, EC_TIMEOUTRXM * 20);
+    // int rtn = ec_SDOwrite(slave, index, subindex, FALSE, sizeof(temp), &temp, EC_TIMEOUTRXM * 20);
+    int rtn = ec_SDOwrite(slave, index, subindex, FALSE, sizeof(temp), &temp, EC_TIMEOUTRXM);
     if (rtn == 0) {
         printf("[Axis %u][SDO32] write failed: index=0x%04x sub=0x%02x\r\n",
                (unsigned int) slave,
@@ -155,6 +161,51 @@ int write32(uint16 slave, uint16 index, uint8 subindex, int value) {
                (unsigned int) subindex,
                (unsigned long) temp);
     }
+    return rtn;
+}
+
+int write16_test(uint16 slave, uint16 index, uint8 subindex, int value) {
+    uint16 temp = (uint16) value;
+    TickType_t start_tick;
+    TickType_t end_tick;
+    uint32_t elapsed_ms;
+    int rtn;
+
+    printf("[SDO16] enter slave=%u index=0x%04x sub=0x%02x value=0x%04x\r\n",
+           (unsigned int) slave,
+           (unsigned int) index,
+           (unsigned int) subindex,
+           (unsigned int) temp);
+
+    start_tick = xTaskGetTickCount();
+
+    rtn = ec_SDOwrite(slave,
+                      index,
+                      subindex,
+                      FALSE,
+                      sizeof(temp),
+                      &temp,
+                      EC_TIMEOUTRXM);
+
+    end_tick = xTaskGetTickCount();
+    elapsed_ms =
+            ((uint32_t) (end_tick - start_tick) * 1000U) /
+            (uint32_t) configTICK_RATE_HZ;
+
+    printf("[SDO16] return rtn=%d elapsed=%lu ms\r\n",
+           rtn,
+           (unsigned long) elapsed_ms);
+
+    if (rtn <= 0) {
+        printf("[SDO16] FAILED\r\n");
+
+        while (ec_iserror()) {
+            printf("[SDO16] SOEM error: %s\r\n", ec_elist2string());
+        }
+    } else {
+        printf("[SDO16] OK wkc=%d\r\n", rtn);
+    }
+
     return rtn;
 }
 
@@ -213,7 +264,7 @@ static int ethercat_master_axis_pdo_bind(void) {
         s_last_status_word[slave] = 0U;
         s_last_mode[slave] = 0;
         s_has_last_sample[slave] = 0U;
-        s_pdo_monitor[slave] = (ethercat_pdo_monitor_t) {0};
+        s_pdo_monitor[slave] = (ethercat_pdo_monitor_t){0};
     }
 
     if ((ec_slavecount <= 0) || (ec_slavecount >= EC_MAXSLAVE)) {
@@ -293,7 +344,9 @@ int ethercat_master_axis_operation_enabled_get(uint16_t slave) {
     }
 
     return (((input->StatusWord & CIA402_SW_MASK) ==
-             CIA402_SW_OPERATION_ENABLED) ? 1 : 0);
+             CIA402_SW_OPERATION_ENABLED)
+                ? 1
+                : 0);
 }
 
 /*
@@ -398,9 +451,9 @@ static int ethercat_master_safe_op_warmup(void) {
      */
     for (slave = 1U; slave <= s_axis_count; slave++) {
         s_servo_enable_hold_pos[slave] =
-            s_axis_inputs[slave]->CurrentPosition;
+                s_axis_inputs[slave]->CurrentPosition;
         s_axis_outputs[slave]->TargetPos =
-            s_servo_enable_hold_pos[slave];
+                s_servo_enable_hold_pos[slave];
     }
 
     return 1;
@@ -452,8 +505,10 @@ static int ethercat_master_slave_request_op(uint16_t slave) {
                                          EC_STATE_OPERATIONAL,
                                          0);
             state_confirmed =
-                ((actual_state == EC_STATE_OPERATIONAL) &&
-                 (ec_slave[slave].state == EC_STATE_OPERATIONAL)) ? 1U : 0U;
+            ((actual_state == EC_STATE_OPERATIONAL) &&
+             (ec_slave[slave].state == EC_STATE_OPERATIONAL))
+                ? 1U
+                : 0U;
 
             if ((ec_slave[slave].state & EC_STATE_ERROR) != 0U) {
                 return 0;
@@ -704,7 +759,7 @@ static void ethercat_master_scan_task(void *pvParameters) {
         vTaskDelete(NULL);
         return;
     }
-    ethercat_motion_motor_params_set(262144,5,1,1,3000);
+    ethercat_motion_motor_params_set(262144, 5, 1, 1, 3000);
 
     for (;;) {
         xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
@@ -721,21 +776,47 @@ static void ethercat_master_scan_task(void *pvParameters) {
         if (pdo_ok != 0) {
             gpt_dc_sync_adjust(ec_DCtime);
         }
-        if (pdo_ok != 0) {
-            /*
-             * 先逐轴推进CiA402使能状态机，使能期间由状态机保持
-             * 各轴当前位置，避免目标位置从0或旧轨迹值突跳。
-             */
-            if (ETHERCAT_CIA402_ENABLE_ACTIVE != 0U) {
-                (void) ethercat_servo_all_axes_enable_process(0);
-            }
 
-            /*
-             * 当前运动模块只绑定1号轴。确认1号轴已进入
-             * Operation Enabled后再推进轨迹，生成下一PDO周期的0x607A。
-             */
-            if (ethercat_master_axis_operation_enabled_get(1U) == 1) {
-                ethercat_motion_process();
+        if (current_state == SET_0RIGIN) {
+            continue;
+        }
+        if (pdo_ok != 0) {
+            if (s_servo_enable_request != 0U) {
+                /*
+                 * 请求进入或保持Operation Enabled。
+                 */
+                /*
+                 * 先逐轴推进CiA402使能状态机，使能期间由状态机保持
+                * 各轴当前位置，避免目标位置从0或旧轨迹值突跳。
+                */
+                (void) ethercat_servo_all_axes_enable_process(8);
+                /*
+                 * 当前运动模块只绑定1号轴。确认1号轴已进入
+                 * Operation Enabled后再推进轨迹，生成下一PDO周期的0x607A。
+                 */
+                if (ethercat_master_axis_operation_enabled_get(1U) == 1) {
+                    ethercat_motion_process();
+                }
+            } else {
+                uint16_t status_state = input1s->StatusWord & CIA402_SW_MASK;
+                /*
+                 * 调用该模式前必须保证轨迹已经停止。
+                 * 保持目标位置与实际位置一致，防止残留目标。
+                 */
+                output1s->TargetPos = input1s->CurrentPosition;
+                output1s->TargetVelocity = 0;
+                /*
+                 * 请求Ready To Switch On。
+                 */
+                output1s->ControlWord = CIA402_CW_SHUTDOWN; /* 0x0006 */
+
+                if (status_state == CIA402_SW_READY_TO_SWITCH_ON) {
+                    /*
+                     * 为下一次重新进入使能准备完整状态机。
+                     */
+                    s_enable_state[1U] = SERVO_ENABLE_IDLE;
+                    s_enable_wait_count[1U] = 0U;
+                }
             }
         }
     }
@@ -1042,7 +1123,7 @@ int ethercat_master_pdo_process_check(int wkc) {
         had_last_sample = s_has_last_sample[slave];
         if (had_last_sample != 0U) {
             position_delta =
-                input->CurrentPosition - s_last_position[slave];
+                    input->CurrentPosition - s_last_position[slave];
         } else {
             s_has_last_sample[slave] = 1U;
         }
@@ -1092,4 +1173,20 @@ int ethercat_master_pdo_process_check(int wkc) {
     }
 
     return pdo_ok;
+}
+
+
+uint8_t servo_enable_allowed(void) {
+    if (ethercat_app_master_run_get_state() !=
+        ETHERCAT_MASTER_RUN_STATE_PDO_RUNNING) {
+        return 2;
+    }
+    if ((input1s->StatusWord & CIA402_SW_MASK) == CIA402_SW_READY_TO_SWITCH_ON && s_servo_enable_request == 0) {
+        ethercat_motion_position_sync();
+        s_servo_enable_request = 1;
+    } else if ((input1s->StatusWord & CIA402_SW_MASK) == CIA402_SW_OPERATION_ENABLED && s_servo_enable_request == 1 &&
+               s_control.busy == 0 && s_control.done == 1) {
+        s_servo_enable_request = 0;
+    }
+    return s_servo_enable_request;
 }

@@ -110,6 +110,7 @@
       <configSetting altId="ether_eth2.eth2_txen_txctl.p00_2" configurationId="ether_eth2.eth2_txen_txctl" peripheral="ETHER_ETH2"/>
       <configSetting altId="ether_ethsw.ethsw_phylink0.p10_4" configurationId="ether_ethsw.ethsw_phylink0" peripheral="ETHER_ETHSW"/>
       <configSetting altId="ether_ethsw.ethsw_phylink1.p05_5" configurationId="ether_ethsw.ethsw_phylink1" peripheral="ETHER_ETHSW"/>
+      <configSetting altId="ether_ethsw.ethsw_phylink2.p00_5" configurationId="ether_ethsw.ethsw_phylink2" peripheral="ETHER_ETHSW"/>
       <configSetting altId="ether_gmac.gmac_mdc.p08_7" configurationId="ether_gmac.gmac_mdc" peripheral="ETHER_GMAC"/>
       <configSetting altId="ether_gmac.gmac_mdio.p09_0" configurationId="ether_gmac.gmac_mdio" peripheral="ETHER_GMAC"/>
       <configSetting altId="iic0.iic_scl0.p13_2" configurationId="iic0.iic_scl0" peripheral="IIC0"/>
@@ -131,6 +132,7 @@
       <configSetting altId="p13_7.input" configurationId="p13_7"/>
       <configSetting altId="p14_0.output.low" configurationId="p14_0"/>
       <configSetting altId="p14_2.input" configurationId="p14_2"/>
+      <configSetting altId="p16_2.output.high" configurationId="p16_2"/>
       <configSetting altId="p16_3.input" configurationId="p16_3"/>
       <configSetting altId="p17_3.output.low" configurationId="p17_3"/>
       <configSetting altId="p18_2.output.low" configurationId="p18_2"/>
@@ -138,6 +140,9 @@
       <configSetting altId="p20_2.output.low" configurationId="p20_2"/>
       <configSetting altId="p20_3.output.low" configurationId="p20_3"/>
       <configSetting altId="p20_4.output.low" configurationId="p20_4"/>
+      <configSetting altId="p21_5.output.low" configurationId="p21_5"/>
+      <configSetting altId="p21_6.output.low" configurationId="p21_6"/>
+      <configSetting altId="p21_7.output.low" configurationId="p21_7"/>
       <configSetting altId="p22_1.output.low" configurationId="p22_1"/>
       <configSetting altId="p22_3.output.low" configurationId="p22_3"/>
       <configSetting altId="sci0.rxd_miso0.p16_6" configurationId="sci0.rxd_miso0" isUsedByDriver="true" peripheral="SCI0"/>

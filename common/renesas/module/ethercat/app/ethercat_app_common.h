@@ -31,7 +31,7 @@ typedef enum e_ethercat_master_run_state
 
 typedef struct st_ethercat_app_notify
 {
-    /* port1 Link 状态监控任务句柄，用于防止重复创建监控任务，后续也可用于任务通知。 */
+    /* EtherCAT 主站端口 Link 状态监控任务句柄，用于防止重复创建监控任务，后续也可用于任务通知。 */
     TaskHandle_t port_monitor_task;
 
     /* SOEM 主站扫描任务句柄，用于防止重复创建扫描任务，后续可扩展为主站状态机任务。 */

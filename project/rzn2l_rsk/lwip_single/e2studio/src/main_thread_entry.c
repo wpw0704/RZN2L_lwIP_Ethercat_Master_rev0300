@@ -5,11 +5,15 @@
 #include "gpt.h"
 #include "ethercat_master.h"
 #include "hal_data.h"
+#include "crc_L16.h"
+
+#include "host_command.h"
 
 #include "um_lwip_port_api.h"
 #include "um_ether_netif_api.h"
 #include "lwip_port_main_api.h"
 #include "task.h"
+#include "lwip/sockets.h"
 
 #define LWIP_APP_TASK_NAME        "lwIP app"
 #define LWIP_APP_TASK_PRIORITY    (3U)
@@ -18,9 +22,9 @@
 extern usr_err_t app_lwip_stack_start(void);
 
 extern void app_lwip_task(void *pvParameters);
-
+extern uint8_t test;
 /* Main Thread entry function */
-#define KEYTEST 1
+#define KEYTEST 0
 
 static bool key_pressed(bsp_io_port_pin_t pin);
 
@@ -70,7 +74,8 @@ void main_thread_entry(void *pvParameters) {
         }
     }
     USR_LOG_INFO("Started Serial I/O interface.");
-    /* 当前阶段不运行发包验证函数，只启动 port1和port0/port2 链路稳定监控，为后续做准备。 */
+    /* 按 ETHERCAT_LWIP_PORT_SWAP 配置启动 EtherCAT 与 lwIP 链路监控。 */
+    crc_init();
     usr_err = ethercat_port_monitor_start();
     if (USR_SUCCESS != usr_err) {
         USR_LOG_ERROR("EtherCAT port monitor start failed: %d", usr_err);
@@ -106,6 +111,9 @@ void main_thread_entry(void *pvParameters) {
     }
     /** TODO: add your own code here */
     while (1) {
+
+
+
 #if  KEYTEST
         static key_filter_t key1_filter;
         static key_filter_t key2_filter;
@@ -113,7 +121,7 @@ void main_thread_entry(void *pvParameters) {
         ethercat_motion_status_t status;
         int result;
 
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(100));
 
 #if 0
         /*
@@ -191,42 +199,32 @@ void main_thread_entry(void *pvParameters) {
 
 
 void phy_8211(ether_phy_instance_ctrl_t *p_instance_ctrl) {
-    /* RTL8211F extended-page and LED control registers. */
 #define RTL_8211F_PAGE_SELECT 0x1F
 #define RTL_8211F_EEELCR_ADDR 0x11
 #define RTL_8211F_LED_PAGE 0xD04
 #define RTL_8211F_LCR_ADDR 0x10
 
     uint32_t val1, val2 = 0;
-
-    /* Switch to the RTL8211F LED configuration page. */
+    vTaskDelay(pdMS_TO_TICKS(100));
+    /* switch to led page */
     R_ETHER_PHY_Write(p_instance_ctrl, RTL_8211F_PAGE_SELECT, RTL_8211F_LED_PAGE);
 
-    /* Configure green LED as link status and yellow LED as link/activity. */
+    /* set led1(green) Link 10/100/1000M, and set led2(yellow) Link 10/100/1000M+Active */
     R_ETHER_PHY_Read(p_instance_ctrl, RTL_8211F_LCR_ADDR, &val1);
-    /* LED1: link at 10/100/1000 Mbps. */
-    val1 |= 1U << 5;
-    val1 |= 1U << 8;
-    val1 &= ~(1U << 9);
-    /* LED2: link at 10/100/1000 Mbps plus activity indication. */
-    val1 |= 1U << 10;
-    val1 |= 1U << 11;
+    val1 |= (1 << 5);
+    val1 |= (1 << 8);
+    val1 &= (~(1 << 9));
+    val1 |= (1 << 10);
+    val1 |= (1 << 11);
     R_ETHER_PHY_Write(p_instance_ctrl, RTL_8211F_LCR_ADDR, val1);
 
-    /* Disable EEE LED mode so the green LED stays on while the link is up. */
+    /* set led1(green) EEE LED function disabled so it can keep on when linked */
     R_ETHER_PHY_Read(p_instance_ctrl, RTL_8211F_EEELCR_ADDR, &val2);
-    val2 &= ~(1U << 2);
+    val2 &= (~(1 << 2));
     R_ETHER_PHY_Write(p_instance_ctrl, RTL_8211F_EEELCR_ADDR, val2);
 
-    /* Return to the PHY default register page used by the driver. */
+    /* switch back to page0 */
     R_ETHER_PHY_Write(p_instance_ctrl, RTL_8211F_PAGE_SELECT, 0xa42);
-    // R_ETHER_PHY_Write(p_instance_ctrl, RTL_8211F_PAGE_SELECT, 0x0000);
-
-    R_BSP_SoftwareDelay(100, BSP_DELAY_UNITS_MILLISECONDS);
-
-    R_ETHER_PHY_Read(p_instance_ctrl, 0x02, &val2);
-
-    (void) val2;
 }
 
 static bool key_pressed(bsp_io_port_pin_t pin) {

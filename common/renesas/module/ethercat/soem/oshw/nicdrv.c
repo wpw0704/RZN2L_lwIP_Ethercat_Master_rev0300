@@ -2,6 +2,7 @@
 
 #include "ethercat_port_cfg.h"
 #include "osal.h"
+#include "semphr.h"
 #include "task.h"
 #include "um_ether_netif_api.h"
 
@@ -15,6 +16,9 @@
 
 const uint16 priMAC[3] = {0x1102, 0x3322, 0x5544};
 const uint16 secMAC[3] = {0x1104, 0x3322, 0x5544};
+
+static StaticSemaphore_t s_rx_ready_storage;
+static SemaphoreHandle_t s_rx_ready;
 
 extern ether_netif_instance_t const *gp_ether_netif0;
 
@@ -33,6 +37,7 @@ static uint8_t s_rx_count;
 static uint8_t s_rx_mutex_ready;
 static uint8_t s_port_mutexes_ready;
 static uint8_t s_callback_added;
+static uint8_t s_rx_active;
 
 static void ethercat_netif_callback(ether_netif_callback_args_t *p_args);
 
@@ -40,7 +45,7 @@ static uint8_t *ethercat_frame_buffer(ether_netif_frame_t const *p_frame);
 
 static int ethercat_frame_is_for_master(ether_netif_frame_t const *p_frame);
 
-static void ethercat_rx_queue_push(uint8_t const *p_buffer, uint32_t length);
+static uint8_t ethercat_rx_queue_push(uint8_t const *p_buffer, uint32_t length);
 
 static int ethercat_rx_queue_pop(ethercat_rx_frame_t *p_frame);
 
@@ -92,6 +97,29 @@ int ecx_setupnic(ecx_portt *port, const char *ifname, int secondary) {
         s_rx_mutex_ready = 1U;
     }
 
+    if (NULL == s_rx_ready) {
+        s_rx_ready =
+            xSemaphoreCreateCountingStatic(
+                ETHERCAT_RX_QUEUE_SIZE,
+                0U,
+                &s_rx_ready_storage);
+        if (NULL == s_rx_ready) {
+            return 0;
+        }
+    }
+
+    /* 停止接收并清空旧队列，防止重新初始化后读取上一次运行遗留的帧。 */
+    osal_mutex_lock(&s_rx_mutex);
+    s_rx_active = false;
+    s_rx_head = 0U;
+    s_rx_tail = 0U;
+    s_rx_count = 0U;
+    osal_mutex_unlock(&s_rx_mutex);
+
+    while (pdTRUE == xSemaphoreTake(s_rx_ready, 0U)) {
+        /* 清除与旧队列对应的接收通知。 */
+    }
+
     if (!s_callback_added) {
         memset(&s_rx_callback_args, 0, sizeof(s_rx_callback_args));
         memset(&s_rx_callback_node, 0, sizeof(s_rx_callback_node));
@@ -107,9 +135,9 @@ int ecx_setupnic(ecx_portt *port, const char *ifname, int secondary) {
         s_callback_added = 1U;
     }
 
-    s_rx_head = 0U;
-    s_rx_tail = 0U;
-    s_rx_count = 0U;
+    osal_mutex_lock(&s_rx_mutex);
+    s_rx_active = true;
+    osal_mutex_unlock(&s_rx_mutex);
 
     port->sockhandle = 1;
     port->lastidx = 0;
@@ -121,6 +149,22 @@ int ecx_setupnic(ecx_portt *port, const char *ifname, int secondary) {
 /* 关闭主站网卡端口并标记 socket 句柄无效。 */
 int ecx_closenic(ecx_portt *port) {
     port->sockhandle = 0;
+
+    if (s_rx_mutex_ready) {
+        osal_mutex_lock(&s_rx_mutex);
+        s_rx_active = false;
+        s_rx_head = 0U;
+        s_rx_tail = 0U;
+        s_rx_count = 0U;
+        osal_mutex_unlock(&s_rx_mutex);
+    }
+
+    if (NULL != s_rx_ready) {
+        while (pdTRUE == xSemaphoreTake(s_rx_ready, 0U)) {
+            /* 清除关闭前已经产生的接收通知。 */
+        }
+    }
+
     return 0;
 }
 
@@ -200,24 +244,48 @@ int ecx_outframe_red(ecx_portt *port, int idx) {
     return ecx_outframe(port, idx, 0);
 }
 
-/* 从接收队列中等待并取出一帧 EtherCAT 数据。 */
+/*
+ * 从接收队列中阻塞等待一帧 EtherCAT 数据。
+ * 参数 port：SOEM 端口上下文；timeout_us：最大等待时间，单位微秒。
+ * 返回值：收到帧时返回帧长度，超时或参数/队列异常时返回 0。
+ */
 static int eth_receive(ecx_portt *port, int timeout_us) {
-    osal_timert timer;
     ethercat_rx_frame_t frame;
+    TickType_t timeout_ticks;
+    uint32_t timeout_ms;
 
-    osal_timer_start(&timer, timeout_us);
+    if ((NULL == port) ||
+        (NULL == s_rx_ready) ||
+        (timeout_us < 0)) {
+        return 0;
+    }
 
-    do {
-        if (ethercat_rx_queue_pop(&frame)) {
-            memcpy(&port->tempinbuf, frame.buffer, frame.length);
-            port->tempinbufs = (int) frame.length;
-            return (int) frame.length;
-        }
+    /* 将微秒超时向上取整到 FreeRTOS tick，保证非零超时至少等待一个 tick。 */
+    timeout_ms =
+        ((uint32_t) timeout_us / 1000U) +
+        ((((uint32_t) timeout_us % 1000U) != 0U) ? 1U : 0U);
+    timeout_ticks = pdMS_TO_TICKS(timeout_ms);
+    if (((uint32_t) timeout_us > 0U) && (0U == timeout_ticks)) {
+        timeout_ticks = 1U;
+    }
 
-        taskYIELD();
-    } while (!osal_timer_is_expired(&timer));
+    /* 阻塞等待接收回调通知，使低优先级 lwIP 任务在等待期间能够运行。 */
+    if (pdTRUE != xSemaphoreTake(s_rx_ready, timeout_ticks)) {
+        return 0;
+    }
 
-    return 0;
+    if (!ethercat_rx_queue_pop(&frame)) {
+        return 0;
+    }
+
+    if (frame.length > sizeof(port->tempinbuf)) {
+        return 0;
+    }
+
+    memcpy(&port->tempinbuf, frame.buffer, frame.length);
+    port->tempinbufs = (int) frame.length;
+
+    return (int) frame.length;
 }
 
 /* 等待指定缓冲区索引对应的 EtherCAT 响应帧并写入接收缓冲区。 */
@@ -261,8 +329,12 @@ int ecx_srconfirm(ecx_portt *port, int idx, int timeout) {
     int rx = 0;
     osal_timert timer;
 
+    if ((NULL == port) || (timeout <= 0)) {
+        return 0;
+    }
+
     ecx_outframe(port, idx, 0);
-    osal_timer_start(&timer, timeout);
+    osal_timer_start(&timer, (uint32_t) timeout);
 
     do {
         if (port->rxbufstat[idx] == EC_BUF_RCVD) {
@@ -277,7 +349,8 @@ int ecx_srconfirm(ecx_portt *port, int idx, int timeout) {
             break;
         }
 
-        (void) ecx_waitinframe(port, idx, 5000);
+        /* 单次等待不得超过调用者指定的 SOEM 总超时。 */
+        (void) ecx_waitinframe(port, idx, timeout);
     } while (!osal_timer_is_expired(&timer));
 
     return rx;
@@ -308,7 +381,10 @@ static void ethercat_netif_callback(ether_netif_callback_args_t *p_args) {
         return;
     }
 
-    ethercat_rx_queue_push(p_buffer, p_args->p_frame_packet->length);
+    (void) ethercat_rx_queue_push(
+        p_buffer,
+        p_args->p_frame_packet->length);
+
     USR_HEAP_RELEASE(p_args->p_frame_packet);
 }
 
@@ -337,13 +413,22 @@ static int ethercat_frame_is_for_master(ether_netif_frame_t const *p_frame) {
     return ((p_buffer[12] == ETHERCAT_ETHERTYPE_HIGH) && (p_buffer[13] == ETHERCAT_ETHERTYPE_LOW));
 }
 
-/* 将接收到的 EtherCAT 帧复制并压入环形接收队列。 */
-static void ethercat_rx_queue_push(uint8_t const *p_buffer, uint32_t length) {
+/*
+ * 将一帧 EtherCAT 数据复制到接收队列并产生一条接收通知。
+ * 参数 p_buffer：帧数据地址；length：帧长度。
+ * 返回值：成功入队返回 true，参数无效或接收已停止时返回 false。
+ */
+static uint8_t ethercat_rx_queue_push(uint8_t const *p_buffer, uint32_t length) {
     if ((NULL == p_buffer) || (length > sizeof(s_rx_queue[0].buffer))) {
-        return;
+        return false;
     }
 
     osal_mutex_lock(&s_rx_mutex);
+
+    if (!s_rx_active) {
+        osal_mutex_unlock(&s_rx_mutex);
+        return false;
+    }
 
     if (s_rx_count >= ETHERCAT_RX_QUEUE_SIZE) {
         s_rx_tail = (uint8_t) ((s_rx_tail + 1U) % ETHERCAT_RX_QUEUE_SIZE);
@@ -355,7 +440,12 @@ static void ethercat_rx_queue_push(uint8_t const *p_buffer, uint32_t length) {
     s_rx_head = (uint8_t) ((s_rx_head + 1U) % ETHERCAT_RX_QUEUE_SIZE);
     s_rx_count++;
 
+    /* 当前调用路径位于 Ethernet Reader 任务，不使用 FromISR 版本。 */
+    (void) xSemaphoreGive(s_rx_ready);
+
     osal_mutex_unlock(&s_rx_mutex);
+
+    return true;
 }
 
 /* 从环形接收队列中弹出一帧 EtherCAT 数据。 */

@@ -3,10 +3,10 @@
 #include "ethercat_master.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "ethercat_app_common.h"
 
 #include <float.h>
 #include <limits.h>
-#include <stddef.h>
 
 /* 当前EtherCAT PDO周期为2ms。 */
 #define MOTION_PDO_PERIOD_S                  (0.002f)
@@ -94,17 +94,6 @@ typedef struct {
 
 /* 【七段式-3结束】七段轨迹的数据结构到此结束。 */
 
-/* 运动调度状态。 */
-typedef struct {
-    ethercat_motion_mode_t mode; /* 当前运动模式。 */
-    uint8_t busy; /* 1：命令尚未完整结束。 */
-    uint8_t done; /* 1：上一条命令已正常完成或已执行停止。 */
-    uint8_t error; /* 1：运动执行过程中发生错误。 */
-    uint8_t paused; /* 1：当前运动已暂停，内部轨迹状态仍保留。 */
-    int32_t command_counts; /* 当前输出的S曲线位置指令，单位counts。 */
-    int32_t target_counts; /* 当前运动段最终目标位置，单位counts。 */
-} motion_control_t;
-
 /* 往返运动状态。 */
 typedef struct {
     uint8_t active; /* 1：往返状态机已启动。 */
@@ -121,23 +110,15 @@ typedef struct {
     uint32_t completed_count; /* 已完成的“起点-终点-起点”次数。 */
 } motion_recip_t;
 
-/* 电机参数只在运动模块内部保存，应用层直接传入各项数值。 */
-typedef struct {
-    float encoder_counts_per_motor_rev; /* 电机每转编码器计数，单位counts/rev。 */
-    float lead_mm_per_screw_rev; /* 丝杠每转直线位移，单位mm/rev。 */
-    float gear_ratio; /* 齿轮比，按电机转数/丝杠转数填写。 */
-    float reducer_ratio; /* 减速机比，按输入转数/输出转数填写。 */
-    float max_motor_rpm; /* 电机允许的最大转速，单位r/min。 */
-} motion_motor_params_t;
-
 static motion_motor_params_t s_motor_params; /* 当前电机与机械换算参数。 */
 static uint8_t s_motor_params_ready; /* 1：电机机械参数已经设置。 */
 static uint8_t s_motion_initialized; /* 1：命令位置已与首次实际位置对齐。 */
 static int32_t s_software_zero_counts; /* 软件零点对应的0x6064绝对计数。 */
 static motion_request_t s_request; /* 应用任务到PDO任务的单槽命令区。 */
 static motion_trajectory_t s_trajectory; /* 当前S形运动段的运行数据。 */
+
 /* 当前运动调度状态，上电默认空闲且目标位置为0。 */
-static motion_control_t s_control = {
+motion_control_t s_control = {
     .mode = ETHERCAT_MOTION_MODE_IDLE,
     .busy = 0U,
     .done = 0U,
@@ -232,16 +213,13 @@ static void motion_target_output_write(void);
  * 该函数只在新命令开始时运行一次，不会在每个轨迹周期重复计算。
  */
 static float motion_positive_sqrt(float value) {
-    float estimate;
-    uint32_t i;
-
     if (value <= 0.0f) {
         return 0.0f;
     }
 
-    estimate = (value > 1.0f) ? value : 1.0f;
+    float estimate = (value > 1.0f) ? value : 1.0f;
 
-    for (i = 0U; i < 24U; i++) {
+    for (uint32_t i = 0U; i < 24U; i++) {
         estimate = 0.5f * (estimate + value / estimate);
     }
 
@@ -253,15 +231,12 @@ static float motion_positive_sqrt(float value) {
  * 该函数只在接收新运动段时运行，不占用每个PDO周期的实时计算时间。
  */
 static float motion_positive_cbrt(float value) {
-    float estimate;
-    uint32_t i;
-
     if (value <= 0.0f) {
         return 0.0f;
     }
 
     /* 先按2倍缩放到立方根附近，避免直接用value作为初值造成溢出。 */
-    estimate = 1.0f;
+    float estimate = 1.0f;
     if (value > 1.0f) {
         while (estimate < value / estimate / estimate) {
             estimate *= 2.0f;
@@ -272,7 +247,7 @@ static float motion_positive_cbrt(float value) {
         }
     }
 
-    for (i = 0U; i < 16U; i++) {
+    for (uint32_t i = 0U; i < 16U; i++) {
         estimate = (2.0f * estimate +
                     value / estimate / estimate) /
                    3.0f;
@@ -311,15 +286,12 @@ static float motion_counts_per_mm_get(void) {
  * 根据最大电机转速和传动参数计算机构允许的最大直线速度，返回单位mm/s。
  */
 static float motion_max_linear_velocity_mm_s_get(void) {
-    float screw_rps;
-    float linear_mm_s;
+    const float screw_rps = (s_motor_params.max_motor_rpm / 60.0f) /
+                            (s_motor_params.gear_ratio *
+                             s_motor_params.reducer_ratio);
 
-    screw_rps = (s_motor_params.max_motor_rpm / 60.0f) /
-                (s_motor_params.gear_ratio *
-                 s_motor_params.reducer_ratio);
-
-    linear_mm_s = screw_rps *
-                  s_motor_params.lead_mm_per_screw_rev;
+    const float linear_mm_s = screw_rps *
+                              s_motor_params.lead_mm_per_screw_rev;
 
     return linear_mm_s;
 }
@@ -329,14 +301,12 @@ static float motion_max_linear_velocity_mm_s_get(void) {
  * position_mm可以为负数；转换结果通过counts返回。
  */
 static int motion_mm_to_counts(float position_mm, int32_t *counts) {
-    float counts_float;
-
     if ((counts == NULL) ||
         (!motion_float_is_finite(position_mm))) {
         return ETHERCAT_MOTION_ERR_PARAM;
     }
 
-    counts_float = position_mm * motion_counts_per_mm_get();
+    const float counts_float = position_mm * motion_counts_per_mm_get();
 
     if ((counts_float > (float) INT32_MAX) ||
         (counts_float < (float) INT32_MIN)) {
@@ -363,7 +333,6 @@ static int motion_position_target_get(ethercat_motion_mode_t mode,
                                       int32_t *target_counts) {
     int32_t offset_counts;
     int64_t target_64;
-    int result;
 
     if ((input1s == NULL) || (target_counts == NULL)) {
         return ETHERCAT_MOTION_ERR_NOT_READY;
@@ -375,7 +344,7 @@ static int motion_position_target_get(ethercat_motion_mode_t mode,
         return ETHERCAT_MOTION_ERR_PARAM;
     }
 
-    result = motion_mm_to_counts(position_mm, &offset_counts);
+    const int result = motion_mm_to_counts(position_mm, &offset_counts);
     if (result != ETHERCAT_MOTION_OK) {
         return result;
     }
@@ -520,23 +489,23 @@ static int motion_trajectory_start(int32_t start_counts,
         1.0f, 0.0f, -1.0f, 0.0f, -1.0f, 0.0f, 1.0f
     };
     int64_t delta_64; //目标位置减起点位置
-    float distance_counts;  //运动距离的绝对值，单位 counts。
+    float distance_counts; //运动距离的绝对值，单位 counts。
 
     /* 输入的 mm/s、mm/s²、mm/s³ 转换成编码器单位。*/
-    float max_velocity_counts_s;    //mm/s
-    float max_acceleration_counts_s2;   //mm/s²
-    float max_jerk_counts_s3;          // mm/s³
+    float max_velocity_counts_s; //mm/s
+    float max_acceleration_counts_s2; //mm/s²
+    float max_jerk_counts_s3; // mm/s³
 
     // 判断短距离轨迹能否达到最大加速度所需的速度和距离临界值。
     float acceleration_transition_velocity;
     float acceleration_transition_distance;
 
-    float time_jerk;    //Jerk段时间，即加速度正在变化的时间
-    float time_constant_acceleration;   //恒加速度段时间，即加速度保持不变的时间
-    float time_constant_velocity;       //匀速段时间，即速度保持不变的时间
-    float velocity_profile_distance;    //达到指定最大速度，最少需要多少距离
-    float segment_duration[MOTION_S7_SEGMENT_COUNT];    //保存七段各自的持续时间
-    float direction;    //+1：正方向;-1：反方向
+    float time_jerk; //Jerk段时间，即加速度正在变化的时间
+    float time_constant_acceleration; //恒加速度段时间，即加速度保持不变的时间
+    float time_constant_velocity; //匀速段时间，即速度保持不变的时间
+    float velocity_profile_distance; //达到指定最大速度，最少需要多少距离
+    float segment_duration[MOTION_S7_SEGMENT_COUNT]; //保存七段各自的持续时间
+    float direction; //+1：正方向;-1：反方向
 
     // 积分过程中保存每一段开始时的完整运动状态
     float position;
@@ -546,8 +515,8 @@ static int motion_trajectory_start(int32_t start_counts,
     float duration;
 
     float jerk; //当前段的 Jerk
-    float duration2;    //时间平方
-    float duration3;    //时间立方
+    float duration2; //时间平方
+    float duration3; //时间立方
 
     // 把轨迹总时间换算成2ms PDO周期数
     float cycles_float;
@@ -577,11 +546,11 @@ static int motion_trajectory_start(int32_t start_counts,
     // 把距离转换为正数
     distance_counts = (delta_64 > 0) ? (float) delta_64 : (float) -delta_64;
     // mm/s 转换为 counts/s
-    max_velocity_counts_s = velocity_mm_s *motion_counts_per_mm_get();
+    max_velocity_counts_s = velocity_mm_s * motion_counts_per_mm_get();
     // mm/s² 转换为 counts/s²
-    max_acceleration_counts_s2 = acceleration_mm_s2 *motion_counts_per_mm_get();
+    max_acceleration_counts_s2 = acceleration_mm_s2 * motion_counts_per_mm_get();
     // mm/s³ 转换为 counts/s³
-    max_jerk_counts_s3 = jerk_mm_s3 *motion_counts_per_mm_get();
+    max_jerk_counts_s3 = jerk_mm_s3 * motion_counts_per_mm_get();
 
     // 检查
     if ((!motion_float_is_positive(max_velocity_counts_s)) ||
@@ -621,20 +590,20 @@ static int motion_trajectory_start(int32_t start_counts,
          *  说明可以先达到最大加速度，然后继续保持恒加速度。
          */
         // A = J × Tj => Tj = A/J => 获得Tj Jerk段运动时间
-        time_jerk = max_acceleration_counts_s2 /max_jerk_counts_s3;
+        time_jerk = max_acceleration_counts_s2 / max_jerk_counts_s3;
         // 计算达到最大速度还需要保持多长时间的恒加速度
-        time_constant_acceleration = max_velocity_counts_s / max_acceleration_counts_s2 -time_jerk;
+        time_constant_acceleration = max_velocity_counts_s / max_acceleration_counts_s2 - time_jerk;
     }
 
-    velocity_profile_distance =max_velocity_counts_s *(2.0f * time_jerk + time_constant_acceleration);
+    velocity_profile_distance = max_velocity_counts_s * (2.0f * time_jerk + time_constant_acceleration);
 
     if (distance_counts >= velocity_profile_distance) {
         /* 距离足够：能够达到给定最大速度，第4段存在匀速时间。 */
-        time_constant_velocity =(distance_counts - velocity_profile_distance) /max_velocity_counts_s;
+        time_constant_velocity = (distance_counts - velocity_profile_distance) / max_velocity_counts_s;
     } else if ((max_velocity_counts_s >= acceleration_transition_velocity) &&
-               (distance_counts >=acceleration_transition_distance)) {
+               (distance_counts >= acceleration_transition_distance)) {
         /* 能达到最大加速度，但距离不足以达到最大速度。 */
-        time_jerk = max_acceleration_counts_s2 /max_jerk_counts_s3;
+        time_jerk = max_acceleration_counts_s2 / max_jerk_counts_s3;
         /*
          * Ta = time_constant_acceleration  恒加速度时间，未知量
          * Tj = time_jerk                  每个Jerk段时间，已经算出
@@ -643,11 +612,11 @@ static int motion_trajectory_start(int32_t start_counts,
          * 公式：Ta = (√(Tj² + 4D/A) - 3Tj) / 2
          */
         time_constant_acceleration =
-                (motion_positive_sqrt(
-                     time_jerk * time_jerk +
-                     4.0f * distance_counts /
-                     max_acceleration_counts_s2) -
-                 3.0f * time_jerk) /2.0f;
+        (motion_positive_sqrt(
+             time_jerk * time_jerk +
+             4.0f * distance_counts /
+             max_acceleration_counts_s2) -
+         3.0f * time_jerk) / 2.0f;
         // 防止浮点误差导致一个很小的负数
         if (time_constant_acceleration < 0.0f) {
             time_constant_acceleration = 0.0f;
@@ -688,10 +657,10 @@ static int motion_trajectory_start(int32_t start_counts,
     segment_duration[6] = time_jerk;
 
     /* 从x=0、v=0、a=0积分，保存每一段开始时的完整运动状态。 */
-    position = 0.0f;    // 初始位置
-    velocity = 0.0f;    // 初始速度
-    acceleration = 0.0f;    //初始加速度
-    start_time = 0.0f;      //初始时间
+    position = 0.0f; // 初始位置
+    velocity = 0.0f; // 初始速度
+    acceleration = 0.0f; //初始加速度
+    start_time = 0.0f; //初始时间
 
     for (i = 0U; i < MOTION_S7_SEGMENT_COUNT; i++) {
         // 取得本段持续时间
@@ -745,15 +714,15 @@ static int motion_trajectory_start(int32_t start_counts,
     }
 
     // 更新
-    s_trajectory.running = 1U;  //后续可以开始每2ms生成位置点
-    s_trajectory.waiting_actual = 0U;   //还没有进入实际位置到位确认阶段
-    s_trajectory.cycle_index = 0U;      //轨迹从第0周期开始
-    s_trajectory.total_cycles = total_cycles;   //保存总周期数
-    s_trajectory.actual_stable_cycles = 0U;     //清零实际位置稳定计数
-    s_trajectory.start_counts = start_counts;   // 绝对起点
+    s_trajectory.running = 1U; //后续可以开始每2ms生成位置点
+    s_trajectory.waiting_actual = 0U; //还没有进入实际位置到位确认阶段
+    s_trajectory.cycle_index = 0U; //轨迹从第0周期开始
+    s_trajectory.total_cycles = total_cycles; //保存总周期数
+    s_trajectory.actual_stable_cycles = 0U; //清零实际位置稳定计数
+    s_trajectory.start_counts = start_counts; // 绝对起点
     s_trajectory.target_counts = target_counts; //  绝对终点
     s_trajectory.command_counts = start_counts;
-    s_trajectory.total_time_s = start_time;     //保存七段总理论时间
+    s_trajectory.total_time_s = start_time; //保存七段总理论时间
 
     s_control.command_counts = start_counts;
     s_control.target_counts = target_counts;
@@ -787,7 +756,7 @@ static int motion_segment_process(void) {
             s_trajectory.cycle_index++;
         }
         // 计算整条轨迹已经运行的时间
-        elapsed_time = (float) s_trajectory.cycle_index *MOTION_PDO_PERIOD_S;
+        elapsed_time = (float) s_trajectory.cycle_index * MOTION_PDO_PERIOD_S;
         if (elapsed_time > s_trajectory.total_time_s) {
             // 最后一个 PDO 周期可能因为向上取整而超过理论轨迹时间，所以这里进行限幅。
             elapsed_time = s_trajectory.total_time_s;
@@ -797,13 +766,13 @@ static int motion_segment_process(void) {
         segment_index = MOTION_S7_SEGMENT_COUNT - 1U;
         for (i = 0U; i < MOTION_S7_SEGMENT_COUNT; i++) {
             // 计算当前被检查轨迹段的结束时间。
-            segment_end_time =s_trajectory.segment[i].start_time_s +s_trajectory.segment[i].duration_s;
+            segment_end_time = s_trajectory.segment[i].start_time_s + s_trajectory.segment[i].duration_s;
             /**
              *同时满足两个条件，就说明找到了当前轨迹段：
              *当前段持续时间大于0。
              *整条轨迹的已运行时间没有超过当前段的结束时间。
              */
-            if ((s_trajectory.segment[i].duration_s > 0.0f) &&(elapsed_time <= segment_end_time)) {
+            if ((s_trajectory.segment[i].duration_s > 0.0f) && (elapsed_time <= segment_end_time)) {
                 segment_index = i;
                 break;
             }
@@ -831,46 +800,48 @@ static int motion_segment_process(void) {
          * x：本周期相对于整条轨迹起点的位移。
          */
         relative_position =
-            segment->start_position_counts +
+                segment->start_position_counts +
                 segment->start_velocity_counts_s * segment_time +
                 0.5f * segment->start_acceleration_counts_s2 *
                 segment_time2 +
                 segment->jerk_counts_s3 * segment_time3 / 6.0f;
-        command_float = (float) s_trajectory.start_counts +relative_position;
+        command_float = (float) s_trajectory.start_counts + relative_position;
 
         /* 抑制浮点积分误差造成的起点/终点轻微越界。 */
-        if (s_trajectory.target_counts >= s_trajectory.start_counts) { //正方向运动
+        if (s_trajectory.target_counts >= s_trajectory.start_counts) {
+            //正方向运动
             if (command_float < (float) s_trajectory.start_counts) {
                 // 计算位置小于起点时，强制等于起点。
                 command_float = (float) s_trajectory.start_counts;
-            } else if (command_float >(float) s_trajectory.target_counts) {
+            } else if (command_float > (float) s_trajectory.target_counts) {
                 // 计算位置超过终点时，强制等于终点。
                 command_float = (float) s_trajectory.target_counts;
             }
-        } else {//反方向运动
+        } else {
+            //反方向运动
             if (command_float > (float) s_trajectory.start_counts) {
                 command_float = (float) s_trajectory.start_counts;
-            } else if (command_float <(float) s_trajectory.target_counts) {
+            } else if (command_float < (float) s_trajectory.target_counts) {
                 command_float = (float) s_trajectory.target_counts;
             }
         }
         // 浮点位置四舍五入成整数
         if (command_float >= 0.0f) {
-            s_trajectory.command_counts =(int32_t) (command_float + 0.5f);
+            s_trajectory.command_counts = (int32_t) (command_float + 0.5f);
         } else {
-            s_trajectory.command_counts =(int32_t) (command_float - 0.5f);
+            s_trajectory.command_counts = (int32_t) (command_float - 0.5f);
         }
         // 判断指令轨迹是否生成结束
         // 如果当前周期已经达到总周期数，说明整条七段式目标位置已经生成结束。
-        if (s_trajectory.cycle_index >=s_trajectory.total_cycles) {
+        if (s_trajectory.cycle_index >= s_trajectory.total_cycles) {
             // 最后一个周期不再依赖浮点计算结果，直接强制输出精确目标位置
-            s_trajectory.command_counts =s_trajectory.target_counts;
-            s_trajectory.running = 0U;  //标记“不再继续生成 S 曲线位置”。
-            s_trajectory.waiting_actual = 1U;   //进入“等待实际位置稳定到位”阶段。
+            s_trajectory.command_counts = s_trajectory.target_counts;
+            s_trajectory.running = 0U; //标记“不再继续生成 S 曲线位置”。
+            s_trajectory.waiting_actual = 1U; //进入“等待实际位置稳定到位”阶段。
             s_trajectory.actual_stable_cycles = 0U;
         }
         // 把本周期计算出的轨迹位置写入运动控制状态
-        s_control.command_counts =s_trajectory.command_counts;
+        s_control.command_counts = s_trajectory.command_counts;
     }
 
     // 判断是否进入到位确认阶段
@@ -879,7 +850,7 @@ static int motion_segment_process(void) {
     }
 
     // 计算实际位置误差绝对值
-    actual_error =(int64_t) input1s->CurrentPosition -(int64_t) s_trajectory.target_counts;
+    actual_error = (int64_t) input1s->CurrentPosition - (int64_t) s_trajectory.target_counts;
 
     if (actual_error < 0) {
         actual_error = -actual_error;
@@ -887,7 +858,7 @@ static int motion_segment_process(void) {
     // 连续稳定到位判断
     if (actual_error <= MOTION_POSITION_TOLERANCE_COUNTS) {
         // 实际位置每连续一次落入误差范围，稳定计数加1。
-        if (++s_trajectory.actual_stable_cycles >=MOTION_POSITION_STABLE_CYCLES) {
+        if (++s_trajectory.actual_stable_cycles >= MOTION_POSITION_STABLE_CYCLES) {
             // 连续稳定次数满足要求，退出实际位置等待状态。
             s_trajectory.waiting_actual = 0U;
             // 报告当前运动段已经完成。
@@ -1124,7 +1095,7 @@ static void motion_recip_process(void) {
             }
             break;
 
-        case RECIP_STAGE_IDLE://异常状态保护
+        case RECIP_STAGE_IDLE: //异常状态保护
         default:
             motion_finish_error();
             break;
@@ -1260,7 +1231,12 @@ static void motion_target_output_write(void) {
     } else if (target_64 < INT32_MIN) {
         target_64 = INT32_MIN;
     }
-
+    // if (current_state == SET_0RIGIN) {
+    //     output1s->TargetPos = 0;
+    //     ec_receive_processdata(EC_TIMEOUTRET);
+    // }else {
+    //     output1s->TargetPos = (int32_t) target_64;
+    // }
     output1s->TargetPos = (int32_t) target_64;
 }
 
@@ -1352,7 +1328,7 @@ int ethercat_motion_command_set(ethercat_motion_mode_t mode,
     request.action = MOTION_REQUEST_ACTION_START;
     request.mode = mode;
     request.absolute_reference =
-        MOTION_ABSOLUTE_REFERENCE_SOFTWARE_ZERO;
+            MOTION_ABSOLUTE_REFERENCE_SOFTWARE_ZERO;
     request.position_mm = position_mm;
     request.velocity_mm_s = velocity_mm_s;
     request.acceleration_mm_s2 = acceleration_mm_s2;
@@ -1407,14 +1383,14 @@ int ethercat_motion_mechanical_zero_return(void) {
     request.action = MOTION_REQUEST_ACTION_START;
     request.mode = ETHERCAT_MOTION_MODE_MOVE_ABS;
     request.absolute_reference =
-        MOTION_ABSOLUTE_REFERENCE_ENCODER_ZERO;
+            MOTION_ABSOLUTE_REFERENCE_ENCODER_ZERO;
     request.position_mm = 0.0f;
     request.velocity_mm_s =
-        ETHERCAT_MOTION_ZERO_RETURN_VELOCITY_MM_S;
+            ETHERCAT_MOTION_ZERO_RETURN_VELOCITY_MM_S;
     request.acceleration_mm_s2 =
-        ETHERCAT_MOTION_ZERO_RETURN_ACCELERATION_MM_S2;
+            ETHERCAT_MOTION_ZERO_RETURN_ACCELERATION_MM_S2;
     request.jerk_mm_s3 =
-        ETHERCAT_MOTION_ZERO_RETURN_JERK_MM_S3;
+            ETHERCAT_MOTION_ZERO_RETURN_JERK_MM_S3;
 
     return motion_request_submit(&request);
 }
@@ -1479,7 +1455,7 @@ int ethercat_motion_stop(void) {
 
     if (s_request.pending) {
         result = ETHERCAT_MOTION_ERR_BUSY;
-    } else if ((!s_control.busy) || s_control.paused) {
+    } else if (!s_control.busy || s_control.paused) {
         result = ETHERCAT_MOTION_ERR_STATE;
     } else {
         s_request.action = MOTION_REQUEST_ACTION_PAUSE;
@@ -1557,7 +1533,7 @@ void ethercat_motion_process(void) {
      * 模式暂未切换成功时保持当前指令位置，不消耗S曲线周期。
      */
     if (((input1s->StatusWord & CIA402_SW_MASK) !=
-         CIA402_SW_OPERATION_ENABLED) ||(input1s->OpModeNow != 8)) {
+         CIA402_SW_OPERATION_ENABLED) || (input1s->OpModeNow != 8)) {
         /* 首次运行时把命令位置对齐实际位置，防止目标位置从0突跳。 */
         // 情况一：第一次调用时伺服尚未就绪
         if (!s_motion_initialized) {
@@ -1612,9 +1588,74 @@ void ethercat_motion_status_get(ethercat_motion_status_t *status) {
     status->done = s_control.done;
     status->error = s_control.error;
     status->paused = s_control.paused;
-    status->command_position_counts =s_control.command_counts;
-    status->target_position_counts =s_control.target_counts;
-    status->actual_position_counts =(input1s != NULL) ? input1s->CurrentPosition : 0;
-    status->recip_completed_count =s_recip.completed_count;
+    status->command_position_counts = s_control.command_counts;
+    status->target_position_counts = s_control.target_counts;
+    status->actual_position_counts = (input1s != NULL) ? input1s->CurrentPosition : 0;
+    status->recip_completed_count = s_recip.completed_count;
     taskEXIT_CRITICAL();
 }
+
+int ethercat_motion_position_sync(void) {
+    int32_t position_counts;
+
+    if ((input1s == NULL) || (output1s == NULL)) {
+        return ETHERCAT_MOTION_ERR_NOT_READY;
+    }
+
+    taskENTER_CRITICAL();
+
+    position_counts = input1s->CurrentPosition;
+
+    /* 清除还没有被PDO任务取走的旧运动命令。 */
+    s_request.pending = 0U;
+
+    /* 停止旧轨迹，并把内部目标同步到新的0x6064位置。 */
+    motion_abort_apply();
+
+    /*
+     * 驱动器原点已经改变，因此同步软件坐标原点，
+     * 防止后续MOVE_ABS仍使用旧的软件零点偏移。
+     */
+    s_software_zero_counts = position_counts;
+    s_motion_initialized = 1U;
+
+    /* 下一帧RxPDO直接保持新的当前位置。 */
+    output1s->TargetPos = position_counts;
+
+    taskEXIT_CRITICAL();
+
+    return ETHERCAT_MOTION_OK;
+}
+
+
+float get_motor_position_mm(void) {
+    float result;
+    int32_t position_counts;
+    float counts_per_mm;
+
+    taskENTER_CRITICAL();
+
+    if ((input1s == NULL) || (s_motor_params_ready == 0U)) {
+        taskEXIT_CRITICAL();
+        return ETHERCAT_MOTION_ERR_NOT_READY;
+    }
+    /*
+     * 在临界区内取得同一个时刻的位置和机械参数快照，
+     * 避免PDO任务更新位置时应用任务读取到不一致的数据。
+     */
+    position_counts = input1s->CurrentPosition;
+    counts_per_mm = motion_counts_per_mm_get();
+
+    taskEXIT_CRITICAL();
+
+    if (position_counts <= 100) {
+        return 0;
+    }
+    if (!motion_float_is_positive(counts_per_mm)) {
+        return ETHERCAT_MOTION_ERR_LIMIT;
+    }
+    result = (float) position_counts / counts_per_mm;
+
+    return result;
+}
+

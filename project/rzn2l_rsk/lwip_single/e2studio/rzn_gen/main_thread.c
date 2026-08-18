@@ -106,7 +106,7 @@ const uart_instance_t g_uart0 =
 ethsw_instance_ctrl_t g_ethsw0_ctrl;
 
 const ethsw_extend_cfg_t g_ethsw0_extend_cfg =
-{ .specific_tag = ETHSW_SPECIFIC_TAG_DISABLE, .specific_tag_id = 0xE001, .phylink = ETHSW_PHYLINK_DISABLE,
+{ .specific_tag = ETHSW_SPECIFIC_TAG_ENABLE, .specific_tag_id = 0xE001, .phylink = ETHSW_PHYLINK_DISABLE,
 
 };
 
@@ -128,7 +128,7 @@ ether_selector_instance_ctrl_t g_ether_selector2_ctrl;
 
 const ether_selector_cfg_t g_ether_selector2_cfg =
 { .channel = 2, .phylink = ETHER_SELECTOR_PHYLINK_POLARITY_LOW, .interface = ETHER_SELECTOR_INTERFACE_RGMII, .speed =
-          ETHER_SELECTOR_SPEED_1000_MBPS,
+          ETHER_SELECTOR_SPEED_100_MBPS,
   .duplex = ETHER_SELECTOR_DUPLEX_FULL, .ref_clock = ETHER_SELECTOR_REF_CLOCK_INPUT, .p_extend = NULL, };
 
 /* Instance structure to use this module. */
@@ -139,7 +139,7 @@ ether_phy_instance_ctrl_t g_ether_phy2_ctrl;
 const ether_phy_extend_cfg_t g_ether_phy2_extend =
 { .port_type = ETHER_PHY_PORT_TYPE_ETHERNET,
   .mdio_type = ETHER_PHY_MDIO_GMAC,
-  .bps = ETHER_PHY_SPEED_10_1000,
+  .bps = ETHER_PHY_SPEED_100,
   .duplex = ETHER_PHY_DUPLEX_FULL,
   .auto_negotiation = ETHER_PHY_AUTO_NEGOTIATION_ON,
   .phy_reset_pin = BSP_IO_PORT_13_PIN_4,

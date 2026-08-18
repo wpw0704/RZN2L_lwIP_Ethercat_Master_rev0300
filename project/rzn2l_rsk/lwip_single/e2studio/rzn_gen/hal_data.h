@@ -4,9 +4,14 @@
 #include <stdint.h>
 #include "bsp_api.h"
 #include "common_data.h"
+#include "r_crc.h"
+#include "r_crc_api.h"
 #include "r_gpt.h"
 #include "r_timer_api.h"
 FSP_HEADER
+extern const crc_instance_t g_crc0;
+extern crc_instance_ctrl_t g_crc0_ctrl;
+extern const crc_cfg_t g_crc0_cfg;
 /** Timer on GPT Instance. */
 extern const timer_instance_t g_timer0;
 

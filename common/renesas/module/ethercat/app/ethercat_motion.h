@@ -2,6 +2,7 @@
 #define ETHERCAT_MOTION_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 /**
  * 笔记
@@ -21,6 +22,15 @@
 #define ETHERCAT_MOTION_ZERO_RETURN_VELOCITY_MM_S      (10.0f)
 #define ETHERCAT_MOTION_ZERO_RETURN_ACCELERATION_MM_S2 (10.0f)
 #define ETHERCAT_MOTION_ZERO_RETURN_JERK_MM_S3         CSP_LOCAL_JERK_MM_S3
+
+/* 电机参数只在运动模块内部保存，应用层直接传入各项数值。 */
+typedef struct {
+    float encoder_counts_per_motor_rev; /* 电机每转编码器计数，单位counts/rev。 */
+    float lead_mm_per_screw_rev; /* 丝杠每转直线位移，单位mm/rev。 */
+    float gear_ratio; /* 齿轮比，按电机转数/丝杠转数填写。 */
+    float reducer_ratio; /* 减速机比，按输入转数/输出转数填写。 */
+    float max_motor_rpm; /* 电机允许的最大转速，单位r/min。 */
+} motion_motor_params_t;
 /*
  * 运动接口统一返回值。
  * 注意：返回ETHERCAT_MOTION_OK只表示命令已被接受，不表示电机已经运动完成；
@@ -57,6 +67,17 @@ typedef struct {
     int32_t actual_position_counts;    /* 驱动器0x6064反馈的实际位置，单位counts。 */
     uint32_t recip_completed_count;    /* 已完成的完整“起点-终点-起点”次数。 */
 } ethercat_motion_status_t;
+
+/* 运动调度状态。 */
+typedef struct {
+    ethercat_motion_mode_t mode; /* 当前运动模式。 */
+    uint8_t busy; /* 1：命令尚未完整结束。 */
+    uint8_t done; /* 1：上一条命令已正常完成或已执行停止。 */
+    uint8_t error; /* 1：运动执行过程中发生错误。 */
+    uint8_t paused; /* 1：当前运动已暂停，内部轨迹状态仍保留。 */
+    int32_t command_counts; /* 当前输出的S曲线位置指令，单位counts。 */
+    int32_t target_counts; /* 当前运动段最终目标位置，单位counts。 */
+} motion_control_t;
 
 /**
  * @brief 设置电机编码器和机械传动参数。
@@ -212,5 +233,19 @@ void ethercat_motion_process(void);
  * @param status 用于接收状态的结构体指针；传入NULL时函数直接返回。
  */
 void ethercat_motion_status_get(ethercat_motion_status_t *status);
+
+
+/**
+ * @brief 将运动控制器的目标位置同步到当前0x6064位置。
+ *
+ * 清除旧轨迹和待处理运动命令，并把当前位置作为新的保持位置和软件零点。
+ *
+ * @return ETHERCAT_MOTION_OK：同步成功；
+ *         ETHERCAT_MOTION_ERR_NOT_READY：PDO尚未绑定。
+ */
+int ethercat_motion_position_sync(void);
+
+float get_motor_position_mm(void);
+
 
 #endif /* ETHERCAT_MOTION_H */
