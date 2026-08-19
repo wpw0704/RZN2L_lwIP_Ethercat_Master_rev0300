@@ -682,12 +682,12 @@ void ecat_init(void) {
                 ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_OPERATIONAL);
 
                 ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_PDO_RUNNING);
-                xTaskCreate(ethercat_pdo_monitor_log_task,
-                            "PDO monitor",
-                            1024U / sizeof(StackType_t),
-                            NULL,
-                            tskIDLE_PRIORITY + 1U,
-                            NULL);
+                // xTaskCreate(ethercat_pdo_monitor_log_task,
+                //             "PDO monitor",
+                //             1024U / sizeof(StackType_t),
+                //             NULL,
+                //             tskIDLE_PRIORITY + 1U,
+                //             NULL);
             } else {
                 (void) gpt_stop();
                 ec_readstate();
@@ -1177,6 +1177,8 @@ int ethercat_master_pdo_process_check(int wkc) {
 
 
 uint8_t servo_enable_allowed(void) {
+    ethercat_motion_status_t status;
+    ethercat_motion_status_get(&status);
     if (ethercat_app_master_run_get_state() !=
         ETHERCAT_MASTER_RUN_STATE_PDO_RUNNING) {
         return 2;
@@ -1185,7 +1187,7 @@ uint8_t servo_enable_allowed(void) {
         ethercat_motion_position_sync();
         s_servo_enable_request = 1;
     } else if ((input1s->StatusWord & CIA402_SW_MASK) == CIA402_SW_OPERATION_ENABLED && s_servo_enable_request == 1 &&
-               s_control.busy == 0 && s_control.done == 1) {
+               status.busy == 0 && status.done == 1) {
         s_servo_enable_request = 0;
     }
     return s_servo_enable_request;

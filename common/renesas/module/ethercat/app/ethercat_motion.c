@@ -114,7 +114,7 @@ static motion_motor_params_t s_motor_params; /* 当前电机与机械换算参�
 static uint8_t s_motor_params_ready; /* 1：电机机械参数已经设置。 */
 static uint8_t s_motion_initialized; /* 1：命令位置已与首次实际位置对齐。 */
 static int32_t s_software_zero_counts; /* 软件零点对应的0x6064绝对计数。 */
-static motion_request_t s_request; /* 应用任务到PDO任务的单槽命令区。 */
+static  motion_request_t s_request; /* 应用任务到PDO任务的单槽命令区。 */
 static motion_trajectory_t s_trajectory; /* 当前S形运动段的运行数据。 */
 
 /* 当前运动调度状态，上电默认空闲且目标位置为0。 */
@@ -1659,3 +1659,9 @@ float get_motor_position_mm(void) {
     return result;
 }
 
+uint8_t get_motion_request_pending(void) {
+    taskENTER_CRITICAL();
+    const uint8_t result = s_request.pending;
+    taskEXIT_CRITICAL();
+    return result;
+}

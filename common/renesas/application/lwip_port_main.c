@@ -44,8 +44,9 @@
  **********************************************************************************************************************/
 #define TCP_SERVER_RECV_BUFFER_SIZE     (1600)
 #define TCP_SERVER_PORT                 (8000)
-#define TCP_SERVER_TASK_PRIORITY        (3)
-#define SEQUENCE_TASK_PRIORITY        (4)
+#define TCP_SERVER_TASK_PRIORITY        (4)
+#define TCP_SEND_TASK_PRIORITY        (3)
+#define SEQUENCE_TASK_PRIORITY          (3)
 #define TCP_SERVER_TASK_STACK_SIZE      (8192U)
 #define TCP_SERVER_TASK_NAME            "TCP Server task"
 #define TCP_SEND_TASK_NAME            "TCP Send task"
@@ -89,10 +90,30 @@ typedef enum {
     manual_control = 0,
     Sequence_control,
     PLC_control
-}Servo_control_mode;
+} Servo_control_mode;
 
+// 序列结构体
+typedef struct {
+    uint8_t seq_ctrl; //
+    uint8_t seq_flag; // 0:停止 1:启动 2:暂停 3:恢复
+    uint32_t seq_position; // 运行位置
+    uint32_t seq_speed; // 运行速度
+    uint32_t seq_max_force; // 最大力值
+    uint32_t seq_acceleration; // 加速度
+    uint32_t seq_deceleration; // 减速度
+    uint8_t seq_pro; // 序列程序执行状态
+    uint32_t loop_timeout; // 循环超时时间
+    uint32_t input_signal_waittime; // 输入信号等待时间
+    uint32_t dwell_time;
+    double total_distance; // 总距离
+} seq_ctrl;
+
+seq_ctrl sequence_cl = {
+    .seq_flag = 0,
+};
 Servo_control_mode servo_control_mode = manual_control;
 static uint8_t sequence_parameter[TCP_SERVER_RECV_BUFFER_SIZE] = {0};
+static ethercat_motion_status_t status;
 
 /**********************************************************************************************************************
  * Private function prototypes
@@ -139,8 +160,6 @@ static TaskHandle_t sequence_handle = NULL;
 extern uint8_t s_servo_enable_request;
 
 extern control_state_t current_state;
-
-extern motion_control_t s_control;
 
 /**
  * TCP server module instance.
@@ -256,7 +275,7 @@ void lwip_port_user_main(void) {
     rtos_err = xTaskCreate(
         tcp_send_task, TCP_SEND_TASK_NAME,
         TCP_SERVER_TASK_STACK_SIZE / sizeof(StackType_t),
-        gp_tcp_server0_ctrl, TCP_SERVER_TASK_PRIORITY,
+        gp_tcp_server0_ctrl, TCP_SEND_TASK_PRIORITY,
         &tcp_send_handle);
     if (pdTRUE != rtos_err) {
         USR_LOG_ERROR("Failed to create send task.");
@@ -435,7 +454,7 @@ static usr_err_t tcp_server_handle_connected_socket(tcp_server_ctrl_t *p_ctrl, i
                      p_ctrl->recv_buffer[recv_size - 4]
                      , recv_size - 3, p_ctrl->recv_buffer[recv_size - 3]);
         return USR_ERR_ABORTED;
-        }
+    }
 
     uint32_t crc = crc_calc(p_ctrl->recv_buffer, (uint32_t) recv_size - 2);
     USR_LOG_INFO("Calculated CRC: 0x%04lX", crc);
@@ -496,7 +515,7 @@ static usr_err_t tcp_server_handle_connected_socket(tcp_server_ctrl_t *p_ctrl, i
             if (p_ctrl->recv_buffer[14] == 2) {
                 if (get_motor_position_mm() > 0.0) {
                     // 5 为实际出入位置
-                    if (get_motor_position_mm() < 5) {
+                    if (get_motor_position_mm() < 4) {
                         ethercat_motion_software_zero_return();
                         USR_LOG_INFO("Zero Position");
                         break;
@@ -545,17 +564,44 @@ static usr_err_t tcp_server_handle_connected_socket(tcp_server_ctrl_t *p_ctrl, i
         case 0x0007:
             break;
         case 0x000B:
-            if (s_servo_enable_request != 1 || s_control.busy != 0 || s_control.done != 1) {
+            ethercat_motion_status_get(&status);
+            if (s_servo_enable_request != 1 || status.busy != 0 || status.done != 1) {
                 break;
             }
-            FAST_CLEAR_ARRAY(sequence_parameter,TCP_SERVER_RECV_BUFFER_SIZE);
-            uint32_t farm_length = ((uint32_t)p_ctrl->recv_buffer[12] << 8 | (uint32_t)p_ctrl->recv_buffer[13]);
+            FAST_CLEAR_ARRAY(sequence_parameter, TCP_SERVER_RECV_BUFFER_SIZE);
+            uint32_t farm_length = ((uint32_t) p_ctrl->recv_buffer[12] << 8 | (uint32_t) p_ctrl->recv_buffer[13]);
             USR_LOG_INFO("farm_length=%ld", farm_length);
             memcpy(sequence_parameter, &p_ctrl->recv_buffer[14], farm_length); // 获取序列控制数据
             servo_control_mode = Sequence_control;
             USR_LOG_INFO("Sequence Enable");
             break;
         case 0x000C:
+            if (servo_control_mode != Sequence_control) {
+                break;
+            }
+            USR_LOG_INFO("Servo Enabl : %02x", p_ctrl->recv_buffer[14]);
+            sequence_cl.seq_flag = p_ctrl->recv_buffer[14];
+            ethercat_motion_status_get(&status);
+            if (sequence_cl.seq_flag == 0x00) {
+                //暂停
+                send_buf[68] = 0x01;
+                if (status.busy == 1U && status.done == 0 && status.paused == 0U) {
+                    ethercat_motion_stop();
+                }
+            } else if (sequence_cl.seq_flag == 0x01) {
+                // 启动
+                send_buf[68] = 0x00;
+                sequence_cl.seq_pro = sequence_parameter[0];
+            } else if (sequence_cl.seq_flag == 0x02) {
+                // 继续
+                send_buf[68] = 0x00;
+                sequence_cl.seq_flag = 1;
+                if (status.busy == 1U && status.done == 0U && status.paused == 1U) {
+                    ethercat_motion_continue();
+                }
+            } else if (sequence_cl.seq_flag == 0x03) {
+                ethercat_motion_software_zero_return();
+            }
             USR_LOG_INFO("Sequence Control");
             break;
         case 0x000D:
@@ -571,13 +617,175 @@ static usr_err_t tcp_server_handle_connected_socket(tcp_server_ctrl_t *p_ctrl, i
 
 static void sequence_task(void *pvParameter) {
     tcp_server_ctrl_t *p_ctrl = (tcp_server_ctrl_t *) pvParameter;
-
+    static uint8_t j = 0, k = 0, s = 0;
     for (;;) {
         vTaskDelay(100);
-        if (servo_control_mode != Sequence_control) {
-            continue;
-        }
+        if (servo_control_mode == Sequence_control && sequence_cl.seq_flag == 0x01) {
+            sequence_cl.seq_pro = sequence_parameter[j];
+            send_buf[70] = sequence_cl.seq_pro;
+            switch (sequence_cl.seq_pro) {
+                case 0xE1: // 获取标签号
+                    USR_LOG_INFO("0XE1");
+                    // send_buf[70] = sequence_parameter[j];
+                    USR_LOG_INFO("Get Label Number");
+                    j += 1;
+                    send_buf[69] = sequence_parameter[j];
+                    j += 1;
+                    break;
+                case 0xE2: // 曲线测量
+                    USR_LOG_INFO("0XE2");
+                    USR_LOG_INFO("start curve measurement");
+                    j += 2;
+                    break;
+                case 0xE3: // 保压时间
+                    USR_LOG_INFO("0XE3");
+                    sequence_cl.dwell_time = (uint32_t) sequence_parameter[j + 1] << 24 | (
+                                                 (uint32_t) sequence_parameter[j + 2] << 16) | (
+                                                 (uint32_t) sequence_parameter[j + 3] << 8) | (uint32_t)
+                                             sequence_parameter[
+                                                 j + 4];
+                    USR_LOG_INFO("dwell_time = %ld", sequence_cl.dwell_time);
+                    vTaskDelay(sequence_cl.dwell_time);
+                    j += 5;
+                    break;
+                case 0xE4: // 输出信号
+                    USR_LOG_INFO("0XE4");
+                    j += 1;
+                    uint8_t output_signal = sequence_parameter[j]; // 获取所有信号个数
+                    // 输出信号实现
+                    for (size_t i = 1; i < output_signal * 2; i++) {
+                        // 信号名称
+                        USR_LOG_INFO("Output Signal Name: 0x%02x ", sequence_parameter[j + i]);
+                        sn595_data_set(sequence_parameter[j + i], sequence_parameter[j + i + 1]);
+                        i++;
+                        USR_LOG_INFO("Output Signal Value: 0x%02x", sequence_parameter[j + i]);
 
+                        vTaskDelay(100 / portTICK_PERIOD_MS);
+                        // 获取信号值
+                    }
+                    j += (output_signal * 2 + 1);
+                    break;
+                case 0xE5: // 循环次数
+                    USR_LOG_INFO("0XE5");
+                    k = sequence_parameter[j + 1];
+                    USR_LOG_INFO("Loop Count: %d ", k);
+                    sequence_cl.loop_timeout = (uint32_t) sequence_parameter[j + 2] << 24 | (
+                                                   (uint32_t) sequence_parameter[j + 3] << 16) | (
+                                                   (uint32_t) sequence_parameter[j + 4] << 8) | (uint32_t)
+                                               sequence_parameter[j + 5];
+                    USR_LOG_INFO("Loop Timeout: %ld ms", sequence_cl.loop_timeout);
+                    j += 6;
+                    s = j;
+                    break;
+                case 0xE6: // 暂停步骤
+                    USR_LOG_INFO("0XE6");
+                    sequence_cl.seq_flag = 0x00; // 更新步骤控制为暂停
+                    send_buf[68] = 0x01; // 更改发送缓冲区中的步骤控制状态
+                    j += 1;
+                    break;
+                case 0xE7: // 循环结束
+                    USR_LOG_INFO("0XE7");
+                    if (k == 1) {
+                        j += 1;
+                        USR_LOG_INFO("0XE7");
+                        USR_LOG_INFO("Loop End");
+                    } else {
+                        vTaskDelay(sequence_cl.loop_timeout / portTICK_PERIOD_MS);
+                        k--;
+                        j = s;
+                    }
+                    break;
+                case 0xE8: // 序列结束
+                    USR_LOG_INFO("0XE8");
+                    sequence_cl.seq_flag = 0x04;
+                    j = 2;
+                    break;
+                case 0xE9: // 动作-位置
+                    USR_LOG_INFO("0XE9");
+                    static uint8_t direction = 0;
+                    if (sequence_parameter[j + 1] == 1) {
+                        USR_LOG_INFO("relative location");
+                        direction = 1;
+                    } else if (sequence_parameter[j + 1] == 2) {
+                        USR_LOG_INFO("absolute location");
+                        direction = 2;
+                    } else {
+                        direction = 0;
+                        USR_LOG_INFO("location error");
+                    }
+                    // 获取位置
+                    sequence_cl.seq_position = ((uint32_t) sequence_parameter[j + 2] << 24) | (
+                                                   (uint32_t) sequence_parameter[j + 3] << 16) | (
+                                                   (uint32_t) sequence_parameter[j + 4] << 8) | (uint32_t)
+                                               sequence_parameter[j + 5];
+                    if (sequence_cl.seq_position == 0) {
+                        sequence_cl.seq_position = 10000;
+                    }
+                    USR_LOG_INFO(" seq_Position: %.4f mm", (float)sequence_cl.seq_position / 10000.0);
+                    // 获取速度
+                    sequence_cl.seq_speed = ((uint32_t) sequence_parameter[j + 6] << 8) | (uint32_t) sequence_parameter[
+                                                j + 7];
+                    if (sequence_cl.seq_speed == 0) {
+                        sequence_cl.seq_speed = 100;
+                    }
+                    USR_LOG_INFO("Speed: %.2f mm/s", (float)sequence_cl.seq_speed / 100.0);
+                    // 获取最大力值
+                    sequence_cl.seq_max_force = ((uint32_t) sequence_parameter[j + 8] << 24) | (
+                                                    (uint32_t) sequence_parameter[j + 9] << 16) | (
+                                                    (uint32_t) sequence_parameter[j + 10] << 8) | (uint32_t)
+                                                sequence_parameter[j + 11];
+                    USR_LOG_INFO("Max Force: %.2f N", (float)sequence_cl.seq_max_force / 100.0);
+                    // 获取加速度
+                    sequence_cl.seq_acceleration = ((uint32_t) sequence_parameter[j + 12] << 8) | (uint32_t)
+                                                   sequence_parameter[j + 13];
+                    if (sequence_cl.seq_acceleration == 0) {
+                        sequence_cl.seq_acceleration = 500;
+                    }
+                    USR_LOG_INFO("Acceleration: %.2f", (float)sequence_cl.seq_acceleration / 100.0);
+
+                    // 获取减速度
+                    sequence_cl.seq_deceleration = ((uint32_t) sequence_parameter[j + 14] << 8) | (uint32_t)
+                                                   sequence_parameter[j + 15];
+                    USR_LOG_INFO("Deceleration: %.2f", (float)sequence_cl.seq_deceleration / 100.0);
+                    if (direction == 1) {
+                        ethercat_motion_command_set(ETHERCAT_MOTION_MODE_MOVE_REL,
+                                                    (float) sequence_cl.seq_position / 10000.0,
+                                                    (float) sequence_cl.seq_speed / 100.0,
+                                                    (float) sequence_cl.seq_acceleration / 100.0,CSP_LOCAL_JERK_MM_S3);
+                    } else if (direction == 2) {
+                        ethercat_motion_command_set(ETHERCAT_MOTION_MODE_MOVE_REL,
+                                                    ((float) sequence_cl.seq_position / 10000.0) * (-1.0),
+                                                    (float) sequence_cl.seq_speed / 100.0,
+                                                    (float) sequence_cl.seq_acceleration / 100.0,CSP_LOCAL_JERK_MM_S3);
+                    } else {
+                        USR_LOG_INFO("EER");
+                    }
+                    while (get_motion_request_pending() == 1 || status.busy == 1 || status.done == 0 || sequence_cl.
+                           seq_flag == 0x00) {
+                        vTaskDelay(50);
+                        USR_LOG_INFO("Motion Wating");
+                        ethercat_motion_status_get(&status);
+                    }
+                    j += 16;
+                    break;
+                case 0xEA: // 输入信号
+                    USR_LOG_INFO("0XEA");
+                    // 输入信号实现
+                    USR_LOG_INFO("Input Signal : 0x%02x, state : 0x%02x", sequence_parameter[j + 1],
+                                 sequence_parameter[j + 2]);
+                    sequence_cl.input_signal_waittime =
+                            (uint32_t) sequence_parameter[j + 3] << 24 | ((uint32_t) sequence_parameter[j + 4] << 16) |
+                            (
+                                (uint32_t) sequence_parameter[j + 5] << 8) | (uint32_t) sequence_parameter[j + 6];
+                    USR_LOG_INFO("Input Signal Wait Time: %ld ms", sequence_cl.input_signal_waittime);
+                    vTaskDelay(sequence_cl.input_signal_waittime / portTICK_PERIOD_MS);
+                    j += 7;
+                    break;
+                default:
+                    USR_LOG_INFO("Unknown Command");
+                    break;
+            }
+        }
     }
 }
 
@@ -597,8 +805,7 @@ static void tcp_send_task(void *pvParameter) {
             }
         }
         // sn595_data_update();
-        // sn595_outdata();
-
+        sn595_outdata();
         vTaskDelay(100 / portTICK_PERIOD_MS);
         if (p_ctrl->num_of_socket == 0) {
             vTaskDelay(100 / portTICK_PERIOD_MS);

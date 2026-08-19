@@ -31,18 +31,19 @@ typedef struct {
     float reducer_ratio; /* 减速机比，按输入转数/输出转数填写。 */
     float max_motor_rpm; /* 电机允许的最大转速，单位r/min。 */
 } motion_motor_params_t;
+
 /*
  * 运动接口统一返回值。
  * 注意：返回ETHERCAT_MOTION_OK只表示命令已被接受，不表示电机已经运动完成；
  * 是否完成应通过ethercat_motion_status_get()读取busy、done和error判断。
  */
 typedef enum {
-    ETHERCAT_MOTION_OK = 0,            /* 命令或参数设置已成功接受。 */
-    ETHERCAT_MOTION_ERR_PARAM = -1,    /* 参数或运动模式不合法。 */
-    ETHERCAT_MOTION_ERR_BUSY = -2,     /* 未暂停的运动正在执行，或已有待处理命令。 */
+    ETHERCAT_MOTION_OK = 0, /* 命令或参数设置已成功接受。 */
+    ETHERCAT_MOTION_ERR_PARAM = -1, /* 参数或运动模式不合法。 */
+    ETHERCAT_MOTION_ERR_BUSY = -2, /* 未暂停的运动正在执行，或已有待处理命令。 */
     ETHERCAT_MOTION_ERR_NOT_READY = -3, /* 电机参数或PDO数据尚未准备好。 */
-    ETHERCAT_MOTION_ERR_LIMIT = -4,    /* 位置、速度或数值超出允许范围。 */
-    ETHERCAT_MOTION_ERR_STATE = -5,    /* 当前运动状态不允许执行该操作。 */
+    ETHERCAT_MOTION_ERR_LIMIT = -4, /* 位置、速度或数值超出允许范围。 */
+    ETHERCAT_MOTION_ERR_STATE = -5, /* 当前运动状态不允许执行该操作。 */
 } ethercat_motion_result_t;
 
 /* 当前运动模式。 */
@@ -50,22 +51,22 @@ typedef enum {
     ETHERCAT_MOTION_MODE_IDLE = 0, /* 空闲，当前没有正在执行的运动。 */
     ETHERCAT_MOTION_MODE_MOVE_ABS, /* 绝对运动，位置相对软件机械零点。 */
     ETHERCAT_MOTION_MODE_MOVE_REL, /* 相对运动，位置相对接收命令时的位置。 */
-    ETHERCAT_MOTION_MODE_JOG,      /* 有限距离点动，当前位置加指定偏移。 */
-    ETHERCAT_MOTION_MODE_RECIP,    /* 在起点和偏移终点之间往返运动。 */
-    ETHERCAT_MOTION_MODE_STOP,     /* 已停止并保持当前位置。 */
+    ETHERCAT_MOTION_MODE_JOG, /* 有限距离点动，当前位置加指定偏移。 */
+    ETHERCAT_MOTION_MODE_RECIP, /* 在起点和偏移终点之间往返运动。 */
+    ETHERCAT_MOTION_MODE_STOP, /* 已停止并保持当前位置。 */
 } ethercat_motion_mode_t;
 
 /* 供上位机读取的运动状态。 */
 typedef struct {
-    ethercat_motion_mode_t mode;       /* 当前运动模式。 */
-    uint8_t busy;                      /* 1：运动、到位确认或往返等待仍在进行。 */
-    uint8_t done;                      /* 1：上一条命令已正常完成或已执行停止。 */
-    uint8_t error;                     /* 1：运动执行过程中发生错误。 */
-    uint8_t paused;                    /* 1：运动已暂停，可调用continue继续。 */
-    int32_t command_position_counts;   /* 当前S曲线生成的CSP位置指令，单位counts。 */
-    int32_t target_position_counts;    /* 当前运动段的最终目标位置，单位counts。 */
-    int32_t actual_position_counts;    /* 驱动器0x6064反馈的实际位置，单位counts。 */
-    uint32_t recip_completed_count;    /* 已完成的完整“起点-终点-起点”次数。 */
+    ethercat_motion_mode_t mode; /* 当前运动模式。 */
+    uint8_t busy; /* 1：运动、到位确认或往返等待仍在进行。 */
+    uint8_t done; /* 1：上一条命令已正常完成或已执行停止。 */
+    uint8_t error; /* 1：运动执行过程中发生错误。 */
+    uint8_t paused; /* 1：运动已暂停，可调用continue继续。 */
+    int32_t command_position_counts; /* 当前S曲线生成的CSP位置指令，单位counts。 */
+    int32_t target_position_counts; /* 当前运动段的最终目标位置，单位counts。 */
+    int32_t actual_position_counts; /* 驱动器0x6064反馈的实际位置，单位counts。 */
+    uint32_t recip_completed_count; /* 已完成的完整“起点-终点-起点”次数。 */
 } ethercat_motion_status_t;
 
 /* 运动调度状态。 */
@@ -246,6 +247,8 @@ void ethercat_motion_status_get(ethercat_motion_status_t *status);
 int ethercat_motion_position_sync(void);
 
 float get_motor_position_mm(void);
+
+uint8_t get_motion_request_pending(void);
 
 
 #endif /* ETHERCAT_MOTION_H */
