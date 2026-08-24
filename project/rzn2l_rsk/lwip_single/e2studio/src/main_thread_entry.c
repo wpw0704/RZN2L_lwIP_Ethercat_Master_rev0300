@@ -74,7 +74,7 @@ void main_thread_entry(void *pvParameters) {
         }
     }
     USR_LOG_INFO("Started Serial I/O interface.");
-    /* 按 ETHERCAT_LWIP_PORT_SWAP 配置启动 EtherCAT 与 lwIP 链路监控。 */
+    /* 按 ETHERCAT_LWIP_PORT_SELECTION 配置启动 EtherCAT 与 lwIP 链路监控。 */
     crc_init();
     usr_err = ethercat_port_monitor_start();
     if (USR_SUCCESS != usr_err) {

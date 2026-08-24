@@ -89,7 +89,7 @@ usr_err_t ethercat_port_monitor_start(void) {
 /*
  * 监控各物理网口状态：
  *
- * EtherCAT 与 lwIP 的物理端口由 ETHERCAT_LWIP_PORT_SWAP 配置。
+ * EtherCAT 与 lwIP 的物理端口由 ETHERCAT_LWIP_PORT_SELECTION 配置。
  *
  * 底层Ethernet Monitor只报告“是否存在任意Link Up端口”，
  * 无法区分各物理端口的独立变化。
@@ -137,11 +137,9 @@ static void ethercat_port_monitor_task(void *pvParameters) {
         if (lwip_link_up) {
             if (!lwip_speed_configured) {
                 lwip_speed_configured =
-                        /*切回port0  修改LWIP_ETHERNET_PORT_NUMBER 为 0*/
-                        // lwip_port_configure_ethsw_speed(LWIP_ETHERNET_PORT_NUMBER,
-                        //     (0U == LWIP_ETHERNET_PORT_NUMBER) ?&g_ether_phy0 : &g_ether_phy1);
-                        /*切回port2  修改LWIP_ETHERNET_PORT_NUMBER 为 2*/
-                        lwip_port_configure_ethsw_speed(LWIP_ETHERNET_PORT_NUMBER, &g_ether_phy2);
+                        lwip_port_configure_ethsw_speed(
+                            LWIP_ETHERNET_PORT_NUMBER,
+                            &LWIP_ETHERNET_PHY_INSTANCE);
             }
         } else {
             lwip_speed_configured = false;
@@ -226,8 +224,7 @@ static void ethercat_port_configure_ethsw_speed(void) {
     /* 读取 EtherCAT 主站端口对应 PHY 的协商结果。
      *
      * RZ/N2L ETHSW 的外部 PHY 口和内部 ESC 口速率需要一致，否则可能链路亮但帧转发失败。 */
-    p_phy_instance =
-            (0U == ETHERCAT_MASTER_PORT_NUMBER) ? &g_ether_phy0 : &g_ether_phy1;
+    p_phy_instance = &ETHERCAT_MASTER_PHY_INSTANCE;
 
     fsp_err = p_phy_instance->p_api->linkPartnerAbilityGet(
         p_phy_instance->p_ctrl,

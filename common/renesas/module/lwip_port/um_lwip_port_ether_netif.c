@@ -218,7 +218,7 @@ usr_err_t um_lwip_port_ether_netif_get_local_mac_address(
 /*
  * Ethernet 共用接收回调。
  *
- * EtherCAT 与 lwIP 的物理端口由 ETHERCAT_LWIP_PORT_SWAP 配置。
+ * EtherCAT 与 lwIP 的物理端口由 ETHERCAT_LWIP_PORT_SELECTION 配置。
  */
 static void lwip_ether_netif_callback(
     ether_netif_callback_args_t *p_args)

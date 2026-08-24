@@ -978,7 +978,14 @@
       <property id="module.driver.timer.elc_trigger_nonsafty_event_g" value="_disabled"/>
       <property id="module.driver.timer.elc_trigger_nonsafty_event_h" value="_disabled"/>
     </module>
-    <module id="module.driver.ether_phy_on_ether_phy.21816080">
+    <module id="module.driver.crc_on_crc.1016613977">
+      <property id="module.driver.crc.name" value="g_crc0"/>
+      <property id="module.driver.crc.channel" value="0"/>
+      <property id="module.driver.crc.crc_polynomial" value="module.driver.crc.crc_polynomial.gps_crc_16"/>
+      <property id="module.driver.crc.crc_bit_order" value="module.driver.crc.crc_polynomial.lms_lsb"/>
+      <property id="module.driver.crc.snoop_address" value="module.driver.crc.snoop_address.not_supported"/>
+    </module>
+    <module id="module.driver.ether_phy_on_ether_phy.1019815088">
       <property id="module.driver.ether_phy.name" value="g_ether_phy2"/>
       <property id="module.driver.ether_phy.channel" value="module.driver.ether_phy.channel.0"/>
       <property id="module.driver.ether_phy.phy_lsi_address" value="3"/>
@@ -994,7 +1001,7 @@
       <property id="module.driver.ether_phy.reset_pin" value="enum_mcu.port.external.pin.p13_4"/>
       <property id="module.driver.ether_phy.reset_time" value="15000"/>
     </module>
-    <module id="module.driver.ether_selector_on_ether_selector.115614817">
+    <module id="module.driver.ether_selector_on_ether_selector.1668531628">
       <property id="module.driver.ether_selector.name" value="g_ether_selector2"/>
       <property id="module.driver.ether_selector.channel" value="module.driver.ether_selector.channel.0"/>
       <property id="module.driver.ether_selector.phylink" value="module.driver.ether_selector.phylink.low"/>
@@ -1002,13 +1009,6 @@
       <property id="module.driver.ether_selector.speed" value="module.driver.ether_selector.speed.bps1000m"/>
       <property id="module.driver.ether_selector.duplex" value="module.driver.ether_selector.duplex.full"/>
       <property id="module.driver.ether_selector.ref_clock" value="module.driver.ether_selector.ref_clock.input"/>
-    </module>
-    <module id="module.driver.crc_on_crc.1016613977">
-      <property id="module.driver.crc.name" value="g_crc0"/>
-      <property id="module.driver.crc.channel" value="0"/>
-      <property id="module.driver.crc.crc_polynomial" value="module.driver.crc.crc_polynomial.gps_crc_16"/>
-      <property id="module.driver.crc.crc_bit_order" value="module.driver.crc.crc_polynomial.lms_lsb"/>
-      <property id="module.driver.crc.snoop_address" value="module.driver.crc.snoop_address.not_supported"/>
     </module>
     <context id="_hal.0">
       <stack module="module.driver.ioport_on_ioport.0"/>
@@ -1032,8 +1032,8 @@
         <stack module="module.driver.ether_phy_on_ether_phy.789493329" requires="module.driver.ether.requires.ether_phy1">
           <stack module="module.driver.ether_selector_on_ether_selector.250220238" requires="module.driver.ether.requires.ether_selector"/>
         </stack>
-        <stack module="module.driver.ether_phy_on_ether_phy.21816080" requires="module.driver.ether.requires.ether_phy2">
-          <stack module="module.driver.ether_selector_on_ether_selector.115614817" requires="module.driver.ether.requires.ether_selector"/>
+        <stack module="module.driver.ether_phy_on_ether_phy.1019815088" requires="module.driver.ether.requires.ether_phy2">
+          <stack module="module.driver.ether_selector_on_ether_selector.1668531628" requires="module.driver.ether.requires.ether_selector"/>
         </stack>
         <stack module="module.driver.ether_switch_on_ether_switch.1062036899" requires="module.driver.ether.requires.ethsw"/>
       </stack>
