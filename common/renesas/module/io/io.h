@@ -7,6 +7,7 @@
 #define HC165_PRINT_PERIOD_MS    (1000U)
 
 #define SN595_DATA_COUNT        (24U)
+#define SN165_DATA_COUNT        (24U)
 #define SN595_START_INDEX       (2U)
 #define SN595_CHANGE_COUNT      (5U)
 

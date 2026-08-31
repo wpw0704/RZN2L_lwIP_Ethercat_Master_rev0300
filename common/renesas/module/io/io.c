@@ -30,6 +30,7 @@ sn595_data[23]	YOUT16	D21		OUT01---U13/Q0
  */
 /* 初始状态全部为0 */
 uint8_t sn595_data[SN595_DATA_COUNT] = {0};
+uint8_t sn165_data[SN165_DATA_COUNT] = {0};
 
 void sn595_outdata(void) {
     R_IOPORT_PinWrite(&g_ioport_ctrl, SN595_CLK, BSP_IO_LEVEL_LOW);
