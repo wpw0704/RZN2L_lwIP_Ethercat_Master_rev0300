@@ -250,5 +250,5 @@ float get_motor_position_mm(void);
 
 uint8_t get_motion_request_pending(void);
 
-
+float n_get_motor_position_mm(void);
 #endif /* ETHERCAT_MOTION_H */

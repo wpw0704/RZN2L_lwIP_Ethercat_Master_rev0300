@@ -1659,6 +1659,37 @@ float get_motor_position_mm(void) {
     return result;
 }
 
+float n_get_motor_position_mm(void) {
+    float result;
+    int32_t position_counts;
+    float counts_per_mm;
+
+    taskENTER_CRITICAL();
+
+    if ((input1s == NULL) || (s_motor_params_ready == 0U)) {
+        taskEXIT_CRITICAL();
+        return ETHERCAT_MOTION_ERR_NOT_READY;
+    }
+    /*
+     * 在临界区内取得同一个时刻的位置和机械参数快照，
+     * 避免PDO任务更新位置时应用任务读取到不一致的数据。
+     */
+    position_counts = input1s->CurrentPosition;
+    counts_per_mm = motion_counts_per_mm_get();
+
+    taskEXIT_CRITICAL();
+
+    if (position_counts < 0) {
+        position_counts = -position_counts;
+    }
+    if (!motion_float_is_positive(counts_per_mm)) {
+        return ETHERCAT_MOTION_ERR_LIMIT;
+    }
+    result = (float) position_counts / counts_per_mm;
+
+    return result;
+}
+
 uint8_t get_motion_request_pending(void) {
     taskENTER_CRITICAL();
     const uint8_t result = s_request.pending;

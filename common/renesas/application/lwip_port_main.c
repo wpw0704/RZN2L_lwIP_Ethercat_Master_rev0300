@@ -45,7 +45,7 @@
 #define TCP_SERVER_RECV_BUFFER_SIZE     (1600)
 #define TCP_SERVER_PORT                 (8000)
 #define TCP_SERVER_TASK_PRIORITY        (4)
-#define TCP_SEND_TASK_PRIORITY        (3)
+#define TCP_SEND_TASK_PRIORITY        (4)
 #define SEQUENCE_TASK_PRIORITY          (3)
 #define TCP_SERVER_TASK_STACK_SIZE      (8192U)
 #define TCP_SERVER_TASK_NAME            "TCP Server task"
@@ -115,6 +115,10 @@ Servo_control_mode servo_control_mode = manual_control;
 static uint8_t sequence_parameter[TCP_SERVER_RECV_BUFFER_SIZE] = {0};
 static ethercat_motion_status_t status;
 
+static uint32_t position = 0; // 位置
+static uint32_t speed = 0; // 速度
+static uint32_t max_force = 0; // 当前最大力值
+static uint32_t acceleration = 0; //加速度
 /**********************************************************************************************************************
  * Private function prototypes
  **********************************************************************************************************************/
@@ -154,6 +158,7 @@ extern lwip_port_instance_t const *gp_lwip_port0;
 
 extern ether_netif_instance_t const *gp_ether_netif0;
 extern uint8_t sn595_data[SN595_DATA_COUNT];
+extern uint8_t sn165_data[SN165_DATA_COUNT];
 static TaskHandle_t tcp_send_handle = NULL;
 static TaskHandle_t sequence_handle = NULL;
 
@@ -171,7 +176,8 @@ static tcp_server_ctrl_t *gp_tcp_server0_ctrl = &g_tcp_server0_ctrl;
 static uint8_t send_buf[TCP_SERVER_SEND_BUFFER_SIZE] = {0};
 
 static float real_time_position = 0;
-
+static float n_real_time_position = 0;
+static uint8_t z = 0, k = 0, s = 0;
 static float zero_init_position = 0;
 
 /**
@@ -466,6 +472,19 @@ static usr_err_t tcp_server_handle_connected_socket(tcp_server_ctrl_t *p_ctrl, i
     USR_LOG_INFO("Command: %04x", command);
     switch (command) {
         case 0x0001:
+            // static uint8_t j = 1;
+            // if (j < 23) {
+            //     USR_LOG_INFO("j %02x", j);
+            //     sn595_data_set(j, 1);
+            //     sn165_data[j] = 1;
+            //     j++;
+            // } else {
+            //     for (uint8_t i = 1; i < j; i++) {
+            //         sn595_data_set(i, 0);
+            //         sn165_data[i] = 0;
+            //     }
+            //     j = 0;
+            // }
             uint8_t res = servo_enable_allowed();
             if (res == 1) {
                 servo_control_mode = manual_control;
@@ -475,6 +494,8 @@ static usr_err_t tcp_server_handle_connected_socket(tcp_server_ctrl_t *p_ctrl, i
             } else {
                 USR_LOG_INFO("Enable servo err %d", res);
             }
+            send_buf[61] = p_ctrl->recv_buffer[10];
+            send_buf[62] = p_ctrl->recv_buffer[11];
             break;
         case 0x0002:
             if ((input1s->StatusWord & CIA402_SW_MASK) == CIA402_SW_OPERATION_ENABLED && s_servo_enable_request == 1) {
@@ -499,29 +520,62 @@ static usr_err_t tcp_server_handle_connected_socket(tcp_server_ctrl_t *p_ctrl, i
             current_state = IDLE_STATE;
             ethercat_motion_software_zero_set();
             real_time_position = zero_init_position;
+            n_real_time_position = zero_init_position;
             // USR_LOG_INFO("zero_init_position = %f real_time_position %f", zero_init_position, real_time_position);
             // USR_LOG_INFO("Set Zero Position");
+            send_buf[61] = p_ctrl->recv_buffer[10];
+            send_buf[62] = p_ctrl->recv_buffer[11];
             break;
         case 0x0003:
             if (s_servo_enable_request != 1 || servo_control_mode != manual_control) {
                 break;
             }
+            // 获取位置
+            if (p_ctrl->recv_buffer[15] == 0) {
+                position = (uint32_t) p_ctrl->recv_buffer[16] << 24 | ((uint32_t) p_ctrl->recv_buffer[17] << 16) | (
+                               (uint32_t) p_ctrl->recv_buffer[18] << 8) | (uint32_t) p_ctrl->recv_buffer[19];
+            } else {
+                position = (uint32_t) p_ctrl->recv_buffer[15] << 24 | (uint32_t) p_ctrl->recv_buffer[16] << 16 | (
+                               (uint32_t) p_ctrl->recv_buffer[17] << 8) | (uint32_t) p_ctrl->recv_buffer[18];
+            }
+            if (position == 0) {
+                position = 10000;
+            }
+            USR_LOG_INFO("Position: %.2f mm", (float)position / 10000);
+            // 获取速度
+            speed = (uint32_t) p_ctrl->recv_buffer[21] << 24 | ((uint32_t) p_ctrl->recv_buffer[22] << 16) | (
+                        (uint32_t) p_ctrl->recv_buffer[23] << 8) | (uint32_t) p_ctrl->recv_buffer[24];
+            if (speed == 0) {
+                speed = 10000;
+            }
+            USR_LOG_INFO("acceleration: %.2f mm/s", (float)speed / 10000);
+            // 获取加速度
+            acceleration = (uint32_t) p_ctrl->recv_buffer[31] << 24 | ((uint32_t) p_ctrl->recv_buffer[32] << 16) | (
+                               (uint32_t) p_ctrl->recv_buffer[33] << 8) | (uint32_t) p_ctrl->recv_buffer[34];
+            if (acceleration == 0) {
+                acceleration = 50000;
+            }
+            USR_LOG_INFO("acceleration: %.2f mm/s", (float)acceleration / 10000);
+
             USR_LOG_INFO("Jog Move");
             if (p_ctrl->recv_buffer[14] == 1 && zero_init_position == 0.0) {
-                ethercat_motion_command_set(ETHERCAT_MOTION_MODE_MOVE_REL, 5, 5, 10,CSP_LOCAL_JERK_MM_S3);
+                ethercat_motion_command_set(ETHERCAT_MOTION_MODE_MOVE_REL, (float) position / 10000,
+                                            (float) speed / 10000, (float) acceleration / 10000,CSP_LOCAL_JERK_MM_S3);
                 USR_LOG_INFO("++++++++++++++++++++++++++++++");
                 break;
             }
             if (p_ctrl->recv_buffer[14] == 2) {
                 if (get_motor_position_mm() > 0.0) {
                     // 5 为实际出入位置
-                    if (get_motor_position_mm() < 4) {
+                    if (get_motor_position_mm() < (float) position / 10000) {
                         ethercat_motion_software_zero_return();
                         USR_LOG_INFO("Zero Position");
                         break;
                     }
                     // 5 为实际出入位置
-                    ethercat_motion_command_set(ETHERCAT_MOTION_MODE_MOVE_REL, -4, 5, 10,CSP_LOCAL_JERK_MM_S3);
+                    ethercat_motion_command_set(ETHERCAT_MOTION_MODE_MOVE_REL, -(float) position / 10000,
+                                                (float) speed / 10000, (float) acceleration / 10000,
+                                                CSP_LOCAL_JERK_MM_S3);
                     USR_LOG_INFO("-------------------------------");
                     break;
                 }
@@ -529,16 +583,21 @@ static usr_err_t tcp_server_handle_connected_socket(tcp_server_ctrl_t *p_ctrl, i
                     break;
                 }
                 // test 5 为实际出入位置
-                if (real_time_position < 5.0) {
-                    ethercat_motion_command_set(ETHERCAT_MOTION_MODE_MOVE_REL, -real_time_position, 5, 10,
+                if (real_time_position < (float) position / 10000) {
+                    ethercat_motion_command_set(ETHERCAT_MOTION_MODE_MOVE_REL, -real_time_position,
+                                                (float) speed / 10000, (float) acceleration / 10000,
                                                 CSP_LOCAL_JERK_MM_S3);
                     real_time_position = 0;
                 } else {
                     // 4 为实际出入位置
-                    ethercat_motion_command_set(ETHERCAT_MOTION_MODE_MOVE_REL, -4, 5, 10,CSP_LOCAL_JERK_MM_S3);
-                    real_time_position -= 4;
+                    ethercat_motion_command_set(ETHERCAT_MOTION_MODE_MOVE_REL, -(float) position / 10000,
+                                                (float) speed / 10000, (float) acceleration / 10000,
+                                                CSP_LOCAL_JERK_MM_S3);
+                    real_time_position -= (float) position / 10000;
                 }
             }
+            send_buf[61] = p_ctrl->recv_buffer[10];
+            send_buf[62] = p_ctrl->recv_buffer[11];
             break;
         case 0x0004:
             break;
@@ -558,10 +617,117 @@ static usr_err_t tcp_server_handle_connected_socket(tcp_server_ctrl_t *p_ctrl, i
             // ethercat_motion_motor_params_set(262144, 5, 1, 1, 3000);
             ethercat_motion_motor_params_set(262144, lead, 1, reduction_ratio, 3000);
             USR_LOG_INFO("Set Motor Parameters");
+            send_buf[61] = p_ctrl->recv_buffer[10];
+            send_buf[62] = p_ctrl->recv_buffer[11];
             break;
-        case 0x0006:
+        case 0x7744:
+            if (p_ctrl->recv_buffer[9] == 0x02) {
+                USR_LOG_INFO("Force manual");
+            }
             break;
         case 0x0007:
+            USR_LOG_INFO("X Channel Settings");
+            uint32_t x_pulse_factor = 0;
+            switch (p_ctrl->recv_buffer[14]) {
+                case 0x00:
+                    USR_LOG_INFO("Servo encoder");
+                    USR_LOG_INFO("Signal inversion setting = %d", p_ctrl->recv_buffer[31]);
+                    x_pulse_factor = (uint32_t) p_ctrl->recv_buffer[27] << 24 | (uint32_t) p_ctrl->recv_buffer
+                                     [28]
+                                     << 16 |
+                                     (uint32_t) p_ctrl->recv_buffer[29] << 8 | (uint32_t) p_ctrl->recv_buffer[
+                                         30]
+                                     <<
+                                     0;
+                    USR_LOG_INFO("x_pulse factor = %ld ", x_pulse_factor);
+                    break;
+                case 0x01:
+                    USR_LOG_INFO("linear encoder");
+                    USR_LOG_INFO("Signal inversion setting = %d", p_ctrl->recv_buffer[31]);
+                    x_pulse_factor = (uint32_t) p_ctrl->recv_buffer[27] << 24 | (uint32_t) p_ctrl->recv_buffer
+                                     [28]
+                                     << 16 |
+                                     (uint32_t) p_ctrl->recv_buffer[29] << 8 | (uint32_t) p_ctrl->recv_buffer[
+                                         30]
+                                     <<
+                                     0;
+                    USR_LOG_INFO("x_pulse factor = %ld ", x_pulse_factor);
+                    break;
+                case 0x02:
+                    USR_LOG_INFO("Resistance scale");
+                    USR_LOG_INFO("Proportional setting %d / %d", p_ctrl->recv_buffer[31], p_ctrl->recv_buffer[32]);
+                    break;
+                case 0x03:
+                    USR_LOG_INFO("0 - ±10V");
+                    USR_LOG_INFO("Corresponding Voltage Settings %d / %d", p_ctrl->recv_buffer[31],
+                                 p_ctrl->recv_buffer[32]);
+                    break;
+                default:
+                    break;
+            }
+            USR_LOG_INFO("Set decimal place = %d", p_ctrl->recv_buffer[15]);
+            float x_lower_limit = (float) ((uint32_t) p_ctrl->recv_buffer[17] << 24 | (uint32_t) p_ctrl->recv_buffer[18]
+                                           << 16 |
+                                           (uint32_t) p_ctrl->recv_buffer[19] << 8 | (uint32_t) p_ctrl->recv_buffer[20]
+                                           <<
+                                           0) /
+                                  10000.0;
+            float x_upper_limit = (float) ((uint32_t) p_ctrl->recv_buffer[22] << 24 | (uint32_t) p_ctrl->recv_buffer[23]
+                                           << 16 |
+                                           (uint32_t) p_ctrl->recv_buffer[24] << 8 | (uint32_t) p_ctrl->recv_buffer[25]
+                                           <<
+                                           0) /
+                                  10000.0;
+            USR_LOG_INFO("x_lower_limit = %.2f ,x_upper_limit = %.2f", x_lower_limit, x_upper_limit);
+            send_buf[61] = p_ctrl->recv_buffer[10];
+            send_buf[62] = p_ctrl->recv_buffer[11];
+            break;
+        case 0x0008:
+            USR_LOG_INFO("Y Channel Settings");
+            if (p_ctrl->recv_buffer[14] == 0x00) {
+                USR_LOG_INFO("mV");
+                float sensitivity =
+                        (float) ((uint32_t) p_ctrl->recv_buffer[27] << 24 | (uint32_t) p_ctrl->recv_buffer[28]
+                                 << 16 |
+                                 (uint32_t) p_ctrl->recv_buffer[29] << 8 | (uint32_t) p_ctrl->recv_buffer[30]
+                                 << 0) / 10000.0;
+                float zero_signal = (float) ((uint32_t) p_ctrl->recv_buffer[32] << 24 | (uint32_t) p_ctrl->recv_buffer[
+                                                 33] << 16 |
+                                             (uint32_t) p_ctrl->recv_buffer[34] << 8 | (uint32_t) p_ctrl->recv_buffer[
+                                                 35] << 0) / 10000.0;
+                USR_LOG_INFO("mV_pulse_factor = %.2f Zero-crossing signal = %.2f Signal Inversion Settings =%d",
+                             sensitivity, zero_signal, p_ctrl->recv_buffer[36]);
+            } else if (p_ctrl->recv_buffer[14] == 0x01) {
+                USR_LOG_INFO("0 - ±10V");
+                USR_LOG_INFO("Corresponding Voltage Settings %d / %d", p_ctrl->recv_buffer[26],
+                             p_ctrl->recv_buffer[27]);
+            }
+            USR_LOG_INFO("Set decimal place = %d", p_ctrl->recv_buffer[15]);
+            float y_lower_limit = (float) ((uint32_t) p_ctrl->recv_buffer[17] << 24 | (uint32_t) p_ctrl->recv_buffer[18]
+                                           << 16 |
+                                           (uint32_t) p_ctrl->recv_buffer[19] << 8 | (uint32_t) p_ctrl->recv_buffer[20]
+                                           <<
+                                           0) /
+                                  10000.0;
+            float y_upper_limit = (float) ((uint32_t) p_ctrl->recv_buffer[22] << 24 | (uint32_t) p_ctrl->recv_buffer[23]
+                                           << 16 |
+                                           (uint32_t) p_ctrl->recv_buffer[24] << 8 | (uint32_t) p_ctrl->recv_buffer[25]
+                                           <<
+                                           0) /
+                                  10000.0;
+            USR_LOG_INFO("y_lower_limit = %.2f ,y_upper_limit = %.2f", y_lower_limit, y_upper_limit);
+            send_buf[61] = p_ctrl->recv_buffer[10];
+            send_buf[62] = p_ctrl->recv_buffer[11];
+            break;
+        case 0x0009:
+            USR_LOG_INFO("IO Force Signal %d -- %d", p_ctrl->recv_buffer[14], p_ctrl->recv_buffer[15]);
+            send_buf[61] = p_ctrl->recv_buffer[10];
+            send_buf[62] = p_ctrl->recv_buffer[11];
+            break;
+        case 0x000A:
+            USR_LOG_INFO("IO advanced setup %d", p_ctrl->recv_buffer[14]);
+            send_buf[61] = p_ctrl->recv_buffer[10];
+            send_buf[62] = p_ctrl->recv_buffer[11];
             break;
         case 0x000B:
             ethercat_motion_status_get(&status);
@@ -574,35 +740,43 @@ static usr_err_t tcp_server_handle_connected_socket(tcp_server_ctrl_t *p_ctrl, i
             memcpy(sequence_parameter, &p_ctrl->recv_buffer[14], farm_length); // 获取序列控制数据
             servo_control_mode = Sequence_control;
             USR_LOG_INFO("Sequence Enable");
+            send_buf[61] = p_ctrl->recv_buffer[10];
+            send_buf[62] = p_ctrl->recv_buffer[11];
             break;
         case 0x000C:
             if (servo_control_mode != Sequence_control) {
                 break;
             }
             USR_LOG_INFO("Servo Enabl : %02x", p_ctrl->recv_buffer[14]);
-            sequence_cl.seq_flag = p_ctrl->recv_buffer[14];
             ethercat_motion_status_get(&status);
-            if (sequence_cl.seq_flag == 0x00) {
+            if (p_ctrl->recv_buffer[14] == 0x00) {
                 //暂停
+                sequence_cl.seq_flag = p_ctrl->recv_buffer[14];
                 send_buf[68] = 0x01;
                 if (status.busy == 1U && status.done == 0 && status.paused == 0U) {
                     ethercat_motion_stop();
                 }
-            } else if (sequence_cl.seq_flag == 0x01) {
+            } else if (p_ctrl->recv_buffer[14] == 0x01) {
                 // 启动
+                sequence_cl.seq_flag = p_ctrl->recv_buffer[14];
                 send_buf[68] = 0x00;
                 sequence_cl.seq_pro = sequence_parameter[0];
-            } else if (sequence_cl.seq_flag == 0x02) {
+            } else if (p_ctrl->recv_buffer[14] == 0x02) {
                 // 继续
                 send_buf[68] = 0x00;
                 sequence_cl.seq_flag = 1;
                 if (status.busy == 1U && status.done == 0U && status.paused == 1U) {
                     ethercat_motion_continue();
                 }
-            } else if (sequence_cl.seq_flag == 0x03) {
-                ethercat_motion_software_zero_return();
+            } else if (p_ctrl->recv_buffer[14] == 0x03) {
+                if (send_buf[68] == 0x01 || sequence_cl.seq_pro == 0xE8) {
+                    sequence_cl.seq_flag = p_ctrl->recv_buffer[14];
+                    ethercat_motion_mechanical_zero_return();
+                }
             }
             USR_LOG_INFO("Sequence Control");
+            send_buf[61] = p_ctrl->recv_buffer[10];
+            send_buf[62] = p_ctrl->recv_buffer[11];
             break;
         case 0x000D:
             USR_LOG_INFO("Extract signal");
@@ -617,96 +791,96 @@ static usr_err_t tcp_server_handle_connected_socket(tcp_server_ctrl_t *p_ctrl, i
 
 static void sequence_task(void *pvParameter) {
     tcp_server_ctrl_t *p_ctrl = (tcp_server_ctrl_t *) pvParameter;
-    static uint8_t j = 0, k = 0, s = 0;
     for (;;) {
         vTaskDelay(100);
         if (servo_control_mode == Sequence_control && sequence_cl.seq_flag == 0x01) {
-            sequence_cl.seq_pro = sequence_parameter[j];
+            // USR_LOG_INFO("ZZZZZZZZZZZZ = %d", z);
+            sequence_cl.seq_pro = sequence_parameter[z];
             send_buf[70] = sequence_cl.seq_pro;
             switch (sequence_cl.seq_pro) {
                 case 0xE1: // 获取标签号
                     USR_LOG_INFO("0XE1");
-                    // send_buf[70] = sequence_parameter[j];
-                    USR_LOG_INFO("Get Label Number");
-                    j += 1;
-                    send_buf[69] = sequence_parameter[j];
-                    j += 1;
+                    // send_buf[70] = sequence_parameter[z];
+                    // USR_LOG_INFO("Get Label Number");
+                    z += 1;
+                    send_buf[69] = sequence_parameter[z];
+                    z += 1;
                     break;
                 case 0xE2: // 曲线测量
                     USR_LOG_INFO("0XE2");
-                    USR_LOG_INFO("start curve measurement");
-                    j += 2;
+                    // USR_LOG_INFO("start curve measurement");
+                    z += 2;
                     break;
                 case 0xE3: // 保压时间
                     USR_LOG_INFO("0XE3");
-                    sequence_cl.dwell_time = (uint32_t) sequence_parameter[j + 1] << 24 | (
-                                                 (uint32_t) sequence_parameter[j + 2] << 16) | (
-                                                 (uint32_t) sequence_parameter[j + 3] << 8) | (uint32_t)
+                    sequence_cl.dwell_time = (uint32_t) sequence_parameter[z + 1] << 24 | (
+                                                 (uint32_t) sequence_parameter[z + 2] << 16) | (
+                                                 (uint32_t) sequence_parameter[z + 3] << 8) | (uint32_t)
                                              sequence_parameter[
-                                                 j + 4];
-                    USR_LOG_INFO("dwell_time = %ld", sequence_cl.dwell_time);
+                                                 z + 4];
+                    // USR_LOG_INFO("dwell_time = %ld", sequence_cl.dwell_time);
                     vTaskDelay(sequence_cl.dwell_time);
-                    j += 5;
+                    z += 5;
                     break;
                 case 0xE4: // 输出信号
                     USR_LOG_INFO("0XE4");
-                    j += 1;
-                    uint8_t output_signal = sequence_parameter[j]; // 获取所有信号个数
+                    z += 1;
+                    uint8_t output_signal = sequence_parameter[z]; // 获取所有信号个数
                     // 输出信号实现
                     for (size_t i = 1; i < output_signal * 2; i++) {
                         // 信号名称
-                        USR_LOG_INFO("Output Signal Name: 0x%02x ", sequence_parameter[j + i]);
-                        sn595_data_set(sequence_parameter[j + i], sequence_parameter[j + i + 1]);
+                        // USR_LOG_INFO("Output Signal Name: 0x%02x ", sequence_parameter[z + i]);
+                        sn595_data_set(sequence_parameter[z + i], sequence_parameter[z + i + 1]);
                         i++;
-                        USR_LOG_INFO("Output Signal Value: 0x%02x", sequence_parameter[j + i]);
+                        // USR_LOG_INFO("Output Signal Value: 0x%02x", sequence_parameter[z + i]);
 
                         vTaskDelay(100 / portTICK_PERIOD_MS);
                         // 获取信号值
                     }
-                    j += (output_signal * 2 + 1);
+                    z += (output_signal * 2 + 1);
                     break;
                 case 0xE5: // 循环次数
                     USR_LOG_INFO("0XE5");
-                    k = sequence_parameter[j + 1];
-                    USR_LOG_INFO("Loop Count: %d ", k);
-                    sequence_cl.loop_timeout = (uint32_t) sequence_parameter[j + 2] << 24 | (
-                                                   (uint32_t) sequence_parameter[j + 3] << 16) | (
-                                                   (uint32_t) sequence_parameter[j + 4] << 8) | (uint32_t)
-                                               sequence_parameter[j + 5];
-                    USR_LOG_INFO("Loop Timeout: %ld ms", sequence_cl.loop_timeout);
-                    j += 6;
-                    s = j;
+                    k = sequence_parameter[z + 1];
+                    // USR_LOG_INFO("Loop Count: %d ", k);
+                    sequence_cl.loop_timeout = (uint32_t) sequence_parameter[z + 2] << 24 | (
+                                                   (uint32_t) sequence_parameter[z + 3] << 16) | (
+                                                   (uint32_t) sequence_parameter[z + 4] << 8) | (uint32_t)
+                                               sequence_parameter[z + 5];
+                    // USR_LOG_INFO("Loop Timeout: %ld ms", sequence_cl.loop_timeout);
+                    z += 6;
+                    s = z;
                     break;
                 case 0xE6: // 暂停步骤
                     USR_LOG_INFO("0XE6");
                     sequence_cl.seq_flag = 0x00; // 更新步骤控制为暂停
                     send_buf[68] = 0x01; // 更改发送缓冲区中的步骤控制状态
-                    j += 1;
+                    z += 1;
                     break;
                 case 0xE7: // 循环结束
                     USR_LOG_INFO("0XE7");
                     if (k == 1) {
-                        j += 1;
+                        z += 1;
                         USR_LOG_INFO("0XE7");
                         USR_LOG_INFO("Loop End");
                     } else {
                         vTaskDelay(sequence_cl.loop_timeout / portTICK_PERIOD_MS);
                         k--;
-                        j = s;
+                        z = s;
                     }
                     break;
                 case 0xE8: // 序列结束
                     USR_LOG_INFO("0XE8");
                     sequence_cl.seq_flag = 0x04;
-                    j = 2;
+                    z = 2;
                     break;
                 case 0xE9: // 动作-位置
                     USR_LOG_INFO("0XE9");
                     static uint8_t direction = 0;
-                    if (sequence_parameter[j + 1] == 1) {
+                    if (sequence_parameter[z + 1] == 1) {
                         USR_LOG_INFO("relative location");
                         direction = 1;
-                    } else if (sequence_parameter[j + 1] == 2) {
+                    } else if (sequence_parameter[z + 1] == 2) {
                         USR_LOG_INFO("absolute location");
                         direction = 2;
                     } else {
@@ -714,39 +888,39 @@ static void sequence_task(void *pvParameter) {
                         USR_LOG_INFO("location error");
                     }
                     // 获取位置
-                    sequence_cl.seq_position = ((uint32_t) sequence_parameter[j + 2] << 24) | (
-                                                   (uint32_t) sequence_parameter[j + 3] << 16) | (
-                                                   (uint32_t) sequence_parameter[j + 4] << 8) | (uint32_t)
-                                               sequence_parameter[j + 5];
+                    sequence_cl.seq_position = ((uint32_t) sequence_parameter[z + 2] << 24) | (
+                                                   (uint32_t) sequence_parameter[z + 3] << 16) | (
+                                                   (uint32_t) sequence_parameter[z + 4] << 8) | (uint32_t)
+                                               sequence_parameter[z + 5];
                     if (sequence_cl.seq_position == 0) {
                         sequence_cl.seq_position = 10000;
                     }
-                    USR_LOG_INFO(" seq_Position: %.4f mm", (float)sequence_cl.seq_position / 10000.0);
+                    // USR_LOG_INFO(" seq_Position: %.4f mm", (float)sequence_cl.seq_position / 10000.0);
                     // 获取速度
-                    sequence_cl.seq_speed = ((uint32_t) sequence_parameter[j + 6] << 8) | (uint32_t) sequence_parameter[
-                                                j + 7];
+                    sequence_cl.seq_speed = ((uint32_t) sequence_parameter[z + 6] << 8) | (uint32_t) sequence_parameter[
+                                                z + 7];
                     if (sequence_cl.seq_speed == 0) {
                         sequence_cl.seq_speed = 100;
                     }
-                    USR_LOG_INFO("Speed: %.2f mm/s", (float)sequence_cl.seq_speed / 100.0);
+                    // USR_LOG_INFO("Speed: %.2f mm/s", (float)sequence_cl.seq_speed / 100.0);
                     // 获取最大力值
-                    sequence_cl.seq_max_force = ((uint32_t) sequence_parameter[j + 8] << 24) | (
-                                                    (uint32_t) sequence_parameter[j + 9] << 16) | (
-                                                    (uint32_t) sequence_parameter[j + 10] << 8) | (uint32_t)
-                                                sequence_parameter[j + 11];
-                    USR_LOG_INFO("Max Force: %.2f N", (float)sequence_cl.seq_max_force / 100.0);
+                    sequence_cl.seq_max_force = ((uint32_t) sequence_parameter[z + 8] << 24) | (
+                                                    (uint32_t) sequence_parameter[z + 9] << 16) | (
+                                                    (uint32_t) sequence_parameter[z + 10] << 8) | (uint32_t)
+                                                sequence_parameter[z + 11];
+                    // USR_LOG_INFO("Max Force: %.2f N", (float)sequence_cl.seq_max_force / 100.0);
                     // 获取加速度
-                    sequence_cl.seq_acceleration = ((uint32_t) sequence_parameter[j + 12] << 8) | (uint32_t)
-                                                   sequence_parameter[j + 13];
+                    sequence_cl.seq_acceleration = ((uint32_t) sequence_parameter[z + 12] << 8) | (uint32_t)
+                                                   sequence_parameter[z + 13];
                     if (sequence_cl.seq_acceleration == 0) {
                         sequence_cl.seq_acceleration = 500;
                     }
-                    USR_LOG_INFO("Acceleration: %.2f", (float)sequence_cl.seq_acceleration / 100.0);
+                    // USR_LOG_INFO("Acceleration: %.2f", (float)sequence_cl.seq_acceleration / 100.0);
 
                     // 获取减速度
-                    sequence_cl.seq_deceleration = ((uint32_t) sequence_parameter[j + 14] << 8) | (uint32_t)
-                                                   sequence_parameter[j + 15];
-                    USR_LOG_INFO("Deceleration: %.2f", (float)sequence_cl.seq_deceleration / 100.0);
+                    sequence_cl.seq_deceleration = ((uint32_t) sequence_parameter[z + 14] << 8) | (uint32_t)
+                                                   sequence_parameter[z + 15];
+                    // USR_LOG_INFO("Deceleration: %.2f", (float)sequence_cl.seq_deceleration / 100.0);
                     if (direction == 1) {
                         ethercat_motion_command_set(ETHERCAT_MOTION_MODE_MOVE_REL,
                                                     (float) sequence_cl.seq_position / 10000.0,
@@ -763,26 +937,33 @@ static void sequence_task(void *pvParameter) {
                     while (get_motion_request_pending() == 1 || status.busy == 1 || status.done == 0 || sequence_cl.
                            seq_flag == 0x00) {
                         vTaskDelay(50);
-                        USR_LOG_INFO("Motion Wating");
+                        // USR_LOG_INFO("Motion Wating");
+                        if (sequence_cl.seq_flag == 0x03 && send_buf[68] == 0x01) {
+                            break;
+                        }
                         ethercat_motion_status_get(&status);
                     }
-                    j += 16;
+                    z += 16;
+                    if (sequence_cl.seq_flag == 0x03 && send_buf[68] == 0x01) {
+                        send_buf[70] = 0xE8;
+                        z = 2;
+                    }
                     break;
                 case 0xEA: // 输入信号
                     USR_LOG_INFO("0XEA");
                     // 输入信号实现
-                    USR_LOG_INFO("Input Signal : 0x%02x, state : 0x%02x", sequence_parameter[j + 1],
-                                 sequence_parameter[j + 2]);
+                    // USR_LOG_INFO("Input Signal : 0x%02x, state : 0x%02x", sequence_parameter[z + 1],
+                    // sequence_parameter[z + 2]);
                     sequence_cl.input_signal_waittime =
-                            (uint32_t) sequence_parameter[j + 3] << 24 | ((uint32_t) sequence_parameter[j + 4] << 16) |
+                            (uint32_t) sequence_parameter[z + 3] << 24 | ((uint32_t) sequence_parameter[z + 4] << 16) |
                             (
-                                (uint32_t) sequence_parameter[j + 5] << 8) | (uint32_t) sequence_parameter[j + 6];
-                    USR_LOG_INFO("Input Signal Wait Time: %ld ms", sequence_cl.input_signal_waittime);
+                                (uint32_t) sequence_parameter[z + 5] << 8) | (uint32_t) sequence_parameter[z + 6];
+                    // USR_LOG_INFO("Input Signal Wait Time: %ld ms", sequence_cl.input_signal_waittime);
                     vTaskDelay(sequence_cl.input_signal_waittime / portTICK_PERIOD_MS);
-                    j += 7;
+                    z += 7;
                     break;
                 default:
-                    USR_LOG_INFO("Unknown Command");
+                    USR_LOG_INFO("Unknown Command %d", sequence_cl.seq_pro);
                     break;
             }
         }
@@ -805,8 +986,8 @@ static void tcp_send_task(void *pvParameter) {
             }
         }
         // sn595_data_update();
-        sn595_outdata();
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        // sn595_outdata();
+        vTaskDelay(50 / portTICK_PERIOD_MS);
         if (p_ctrl->num_of_socket == 0) {
             vTaskDelay(100 / portTICK_PERIOD_MS);
             continue;
@@ -817,6 +998,7 @@ static void tcp_send_task(void *pvParameter) {
 
 static void send_frame(uint8_t socket_fd) {
     static uint32_t position_send = 0;
+    static uint8_t i = 0;
     send_buf[0] = 0x73;
     send_buf[1] = 0x4C;
     send_buf[2] = 0x47;
@@ -837,11 +1019,18 @@ static void send_frame(uint8_t socket_fd) {
     send_buf[17] = 0x02;
     send_buf[18] = 0xBC; // 微秒
     if (zero_init_position != 0.0) {
-        position_send = (uint32_t) (real_time_position * 10000);
+        if ((uint32_t) (n_real_time_position * 10000) > (uint32_t) (n_get_motor_position_mm() * 10000)) {
+            position_send = (uint32_t) (n_real_time_position * 10000) - (uint32_t) (n_get_motor_position_mm() * 10000);
+            if (position_send < 100) position_send = 0;
+        } else {
+            position_send = 0;
+        }
+        // USR_LOG_INFO("111position_send %ld", position_send);
     } else {
         position_send = (uint32_t) (get_motor_position_mm() * 10000);
+        // USR_LOG_INFO("222position_send %ld", position_send);
     }
-
+    // USR_LOG_INFO("position_send %ld", position_send);
     // position_send /= 10000;
     // if (position_send > 100) {
     //     position_send = 1;
@@ -880,6 +1069,40 @@ static void send_frame(uint8_t socket_fd) {
                        | ((sn595_data[5] & 0x01) << 4) | ((sn595_data[3] & 0x01) << 5) | (
                            (sn595_data[0] & 0x01) << 6) | (
                            (sn595_data[1] & 0x01) << 7));
+    send_buf[32] = (uint8_t) (((sn165_data[0] & 0x01) << 0) | ((sn165_data[1] & 0x01) << 1) | (
+                                  (sn165_data[2] & 0x01) << 2)
+                              |
+                              (
+                                  (sn165_data[3] & 0x01) << 3)
+                              | ((sn165_data[4] & 0x01) << 4) | ((sn165_data[5] & 0x01) << 5) | (
+                                  (sn165_data[6] & 0x01) << 6) | (
+                                  (sn165_data[7] & 0x01) << 7));
+    send_buf[33] = (uint8_t) (((sn165_data[8] & 0x01) << 0) | ((sn165_data[9] & 0x01) << 1) | (
+                                  (sn165_data[10] & 0x01) << 2)
+                              |
+                              (
+                                  (sn165_data[11] & 0x01) << 3)
+                              | ((sn165_data[12] & 0x01) << 4) | ((sn165_data[13] & 0x01) << 5) | (
+                                  (sn165_data[14] & 0x01) << 6) | (
+                                  (sn165_data[15] & 0x01) << 7));
+    send_buf[34] = (uint8_t) (((sn165_data[16] & 0x01) << 0) | ((sn165_data[17] & 0x01) << 1) | (
+                                  (sn165_data[18] & 0x01) << 2)
+                              |
+                              (
+                                  (sn165_data[19] & 0x01) << 3)
+                              | ((sn165_data[20] & 0x01) << 4) | ((sn165_data[21] & 0x01) << 5) | (
+                                  (sn165_data[22] & 0x01) << 6) | (
+                                  (sn165_data[23] & 0x01) << 7));
+    // if ((send_buf[62] & 0xFF) != 0xE0) {
+    if (send_buf[62] != 0x00) {
+        if (i < 5) {
+            i++;
+        } else {
+            send_buf[62] = 0x00;
+            i = 0;
+        }
+    }
+    // }
     send_buf[74] = 0x00;
     send_buf[75] = 0x0c;
     send_buf[76] = 0x01;
