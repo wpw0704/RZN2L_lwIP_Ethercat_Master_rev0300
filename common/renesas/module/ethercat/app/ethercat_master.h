@@ -161,4 +161,14 @@ int ethercat_master_zero_position_request(void);
  */
 uint8_t servo_enable_allowed(void);
 
+
+usr_err_t ethercat_master_scan_start(void);
+
+/**
+ * @brief 通知SOEM主站任务EtherCAT物理链路已经断开。
+ * @param 无。
+ * @return 无。
+ */
+void ethercat_master_link_down_notify(void);
+
 #endif

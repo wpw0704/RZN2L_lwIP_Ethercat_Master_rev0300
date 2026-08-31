@@ -792,7 +792,7 @@ static usr_err_t tcp_server_handle_connected_socket(tcp_server_ctrl_t *p_ctrl, i
 static void sequence_task(void *pvParameter) {
     tcp_server_ctrl_t *p_ctrl = (tcp_server_ctrl_t *) pvParameter;
     for (;;) {
-        vTaskDelay(100);
+        vTaskDelay(10);
         if (servo_control_mode == Sequence_control && sequence_cl.seq_flag == 0x01) {
             // USR_LOG_INFO("ZZZZZZZZZZZZ = %d", z);
             sequence_cl.seq_pro = sequence_parameter[z];

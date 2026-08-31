@@ -25,6 +25,7 @@ usr_err_t ethercat_app_common_open(void) {
     g_ethercat_app_notify.master_al_state = 0;
     g_ethercat_app_notify.servo_status_word = 0;
     g_ethercat_app_notify.servo_control_word = 0;
+    g_ethercat_app_common_opened = 1U;
 
     return USR_SUCCESS;
 }

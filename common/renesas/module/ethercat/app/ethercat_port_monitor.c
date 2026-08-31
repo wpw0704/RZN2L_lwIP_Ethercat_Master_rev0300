@@ -105,6 +105,9 @@ static void ethercat_port_monitor_task(void *pvParameters) {
     uint8_t lwip_link_initialized = false;
     uint8_t lwip_link_previous = false;
 
+    uint8_t master_link_initialized = false;
+    uint8_t master_link_previous = false;
+
     FSP_PARAMETER_NOT_USED(pvParameters);
 
     for (;;) {
@@ -129,6 +132,21 @@ static void ethercat_port_monitor_task(void *pvParameters) {
         master_link_up =
         ((USR_SUCCESS == usr_err) &&
          (0U != (link_status & ETHERCAT_MASTER_PORT_MASK)));
+        if ((!master_link_initialized) ||
+            (master_link_up != master_link_previous)) {
+            if (master_link_up) {
+                ethercat_app_master_run_set_state(
+                    ETHERCAT_MASTER_RUN_STATE_LINK_UP);
+            } else {
+                ethercat_app_master_run_set_state(
+                    ETHERCAT_MASTER_RUN_STATE_LINK_DOWN);
+
+                ethercat_master_link_down_notify();
+            }
+
+            master_link_previous = master_link_up;
+            master_link_initialized = true;
+        }
 
         lwip_link_up =
         ((USR_SUCCESS == usr_err) &&
@@ -191,17 +209,35 @@ static void ethercat_port_monitor_task(void *pvParameters) {
                 ((xTaskGetTickCount() -
                   master_link_up_start_tick) >=
                  ETHERCAT_LINK_STABLE_TICKS)) {
-                master_stable_reported = true;
-
+                /*
+                 * SOEM扫描前先根据PHY协商结果配置ETHSW端口速率。
+                 */
                 ethercat_port_configure_ethsw_speed();
 
-                USR_LOG_INFO(
-                    "EtherCAT port%u link up > %ums, "
-                    "start SOEM slave scan.",
-                    ETHERCAT_MASTER_PORT_NUMBER,
-                    ETHERCAT_LINK_STABLE_MS);
+                /*
+                 * 只有任务实际创建成功后才置位。
+                 * 如果旧主站任务正在退出，保持false，
+                 * 下一次100ms监控周期会继续尝试。
+                 */
+                usr_err = ethercat_master_scan_start();
 
-                (void) ethercat_master_scan_start();
+                if (USR_SUCCESS == usr_err) {
+                    master_stable_reported = true;
+
+                    USR_LOG_INFO(
+                        "EtherCAT port%u link up > %ums, "
+                        "SOEM scan started.",
+                        ETHERCAT_MASTER_PORT_NUMBER,
+                        ETHERCAT_LINK_STABLE_MS);
+                } else if (USR_ERR_ALREADY_RUNNING != usr_err) {
+                    /*
+                     * ALREADY_RUNNING表示旧主站任务尚未完成退出，
+                     * 属于重连过程中的正常暂态，不重复打印警告。
+                     */
+                    USR_LOG_WARN(
+                        "SOEM scan start failed: %d",
+                        usr_err);
+                }
             }
         } else {
             master_link_up_start_tick = 0U;

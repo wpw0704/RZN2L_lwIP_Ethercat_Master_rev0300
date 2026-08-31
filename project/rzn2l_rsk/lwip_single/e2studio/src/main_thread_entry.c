@@ -24,7 +24,7 @@ extern usr_err_t app_lwip_stack_start(void);
 extern void app_lwip_task(void *pvParameters);
 extern uint8_t test;
 /* Main Thread entry function */
-#define KEYTEST 0
+#define KEYTEST 1
 
 static bool key_pressed(bsp_io_port_pin_t pin);
 

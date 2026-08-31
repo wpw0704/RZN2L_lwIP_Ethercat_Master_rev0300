@@ -21,6 +21,8 @@
 #define ETHERCAT_ZERO_WKC_LIMIT         (5U)
 #define ETHERCAT_GPT_WAIT_MS            (20U)
 
+#define ETHERCAT_MASTER_NOTIFY_LINK_DOWN (1UL << 0)
+
 
 /*
  * SOEM过程数据映射区。
@@ -52,6 +54,7 @@ static int8 s_last_mode[EC_MAXSLAVE];
 static uint8_t s_has_last_sample[EC_MAXSLAVE];
 
 extern motion_control_t s_control;
+static TaskHandle_t monitor_log = NULL;
 
 /* WKC 统计：expected 是理论期望值，last 是最近一次 PDO 返回值 */
 static int s_expected_wkc;
@@ -594,8 +597,8 @@ void ecat_init(void) {
                            (unsigned long) ec_slave[slc].eep_man,
                            (unsigned long) ec_slave[slc].eep_id,
                            (unsigned int) ec_slave[slc].configadr);
-                    //					if ((ec_slave[slc].eep_man == 0x100000) && (ec_slave[slc].eep_id == 0xc0112))
-                    ec_slave[slc].PO2SOconfig = &Servosetup;
+                    if ((ec_slave[slc].eep_man == 0x100000) && (ec_slave[slc].eep_id == 0xc0112))
+                        ec_slave[slc].PO2SOconfig = &Servosetup;
                     //					else
                     //						USR_LOG_INFO("NULL");
                 }
@@ -719,6 +722,29 @@ void ecat_init(void) {
     }
 }
 
+/**
+ * @brief 通知SOEM任务物理链路已经断开。
+ * @param 无。
+ * @return 无。
+ */
+void ethercat_master_link_down_notify(void) {
+    ethercat_app_notify_t *p_notify;
+    TaskHandle_t master_task;
+
+    p_notify = ethercat_app_notify_get();
+
+    taskENTER_CRITICAL();
+
+    master_task = p_notify->master_scan_task;
+    if (master_task != NULL) {
+        (void) xTaskNotify(master_task,
+                           ETHERCAT_MASTER_NOTIFY_LINK_DOWN,
+                           eSetBits);
+    }
+
+    taskEXIT_CRITICAL();
+}
+
 
 /* 创建 SOEM 主站任务。任务已经存在时直接返回成功，防止链路抖动导致重复创建。 */
 usr_err_t ethercat_master_scan_start(void) {
@@ -729,7 +755,7 @@ usr_err_t ethercat_master_scan_start(void) {
     }
     ethercat_app_notify_t *p_notify = ethercat_app_notify_get();
     if (NULL != p_notify->master_scan_task) {
-        return USR_SUCCESS;
+        return USR_ERR_ALREADY_RUNNING;
     }
     ethercat_app_master_scan_set_state(ETHERCAT_MASTER_SCAN_STATE_RUNNING, 0);
     ethercat_app_master_run_set_state(ETHERCAT_MASTER_RUN_STATE_SCANNING);
@@ -762,7 +788,27 @@ static void ethercat_master_scan_task(void *pvParameters) {
     ethercat_motion_motor_params_set(262144, 5, 1, 1, 3000);
 
     for (;;) {
-        xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
+        // xSemaphoreTake(s_gpt_cycle_semaphore, portMAX_DELAY);
+
+        uint32_t notify_value = 0U;
+
+        if ((xTaskNotifyWait(0U,
+                             UINT32_MAX,
+                             &notify_value,
+                             0U) == pdTRUE) &&
+            ((notify_value &
+              ETHERCAT_MASTER_NOTIFY_LINK_DOWN) != 0U)) {
+            USR_LOG_WARN("[Master] Link Down, stop SOEM.");
+            break;
+        }
+
+        /*
+         * 使用有限等待，防止GPT意外停止后任务永远无法退出。
+         */
+        if (xSemaphoreTake(s_gpt_cycle_semaphore,
+                           pdMS_TO_TICKS(ETHERCAT_GPT_WAIT_MS)) != pdTRUE) {
+            continue;
+        }
 
         /* 1. 发送上一周期已经准备好的目标值 */
         (void) ec_send_processdata();
@@ -820,6 +866,38 @@ static void ethercat_master_scan_task(void *pvParameters) {
             }
         }
     }
+    ethercat_app_notify_t *p_notify;
+
+    ethercat_app_master_run_set_state(
+        ETHERCAT_MASTER_RUN_STATE_STOPPING);
+
+    s_servo_enable_request = 0U;
+    current_state = IDLE_STATE;
+
+    (void) gpt_stop();
+    ec_close();
+
+    taskENTER_CRITICAL();
+
+    s_axis_count = 0U;
+    input1s = NULL;
+    output1s = NULL;
+    s_expected_wkc = 0;
+    s_last_wkc = 0;
+
+    p_notify = ethercat_app_notify_get();
+    p_notify->master_scan_task = NULL;
+
+    taskEXIT_CRITICAL();
+
+    ethercat_app_master_status_update(0, 0, 0U, 0U, 0U);
+    ethercat_app_master_scan_set_state(
+        ETHERCAT_MASTER_SCAN_STATE_IDLE,
+        0);
+    ethercat_app_master_run_set_state(
+        ETHERCAT_MASTER_RUN_STATE_LINK_DOWN);
+
+    vTaskDelete(NULL);
 }
 
 /************************** 伺服使能 **************************/
