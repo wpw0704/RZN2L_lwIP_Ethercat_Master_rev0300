@@ -13,7 +13,7 @@
  * Example: ETHERCAT_LWIP_PORTS(1U, 2U) selects SOEM port1 and lwIP port2.
  */
 #define ETHERCAT_LWIP_PORTS(ethercat_port, lwip_port) (((ethercat_port) << 2U) | (lwip_port))
-#define ETHERCAT_LWIP_PORT_SELECTION                  ETHERCAT_LWIP_PORTS(0U, 1U)
+#define ETHERCAT_LWIP_PORT_SELECTION                  ETHERCAT_LWIP_PORTS(1U, 2U)
 
 #define ETHERCAT_MASTER_PORT_NUMBER ((ETHERCAT_LWIP_PORT_SELECTION >> 2U) & 0x03U)
 #define LWIP_ETHERNET_PORT_NUMBER   (ETHERCAT_LWIP_PORT_SELECTION & 0x03U)

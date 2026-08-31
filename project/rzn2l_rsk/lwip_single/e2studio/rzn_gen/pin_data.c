@@ -42,10 +42,6 @@ const ioport_pin_cfg_t g_bsp_pin_cfg_data[] =
           | (uint32_t) IOPORT_CFG_PORT_OUTPUT_LOW) },
   { .pin = BSP_IO_PORT_05_PIN_0, .pin_cfg = ((uint32_t) IOPORT_CFG_PORT_DIRECTION_OUTPUT
           | (uint32_t) IOPORT_CFG_PORT_OUTPUT_LOW) },
-  { .pin = BSP_IO_PORT_05_PIN_2, .pin_cfg = ((uint32_t) IOPORT_CFG_DRIVE_MID | (uint32_t) IOPORT_CFG_PORT_PERI
-          | (uint32_t) IOPORT_PIN_P052_PFC_08_IIC_SCL1) },
-  { .pin = BSP_IO_PORT_05_PIN_3, .pin_cfg = ((uint32_t) IOPORT_CFG_DRIVE_MID | (uint32_t) IOPORT_CFG_PORT_PERI
-          | (uint32_t) IOPORT_PIN_P053_PFC_09_IIC_SDA1) },
   { .pin = BSP_IO_PORT_05_PIN_4, .pin_cfg = ((uint32_t) IOPORT_CFG_PORT_DIRECTION_INPUT) },
   { .pin = BSP_IO_PORT_05_PIN_5, .pin_cfg = ((uint32_t) IOPORT_CFG_PORT_PERI
           | (uint32_t) IOPORT_PIN_P055_PFC_00_ETHSW_PHYLINK1) },
@@ -107,10 +103,6 @@ const ioport_pin_cfg_t g_bsp_pin_cfg_data[] =
           | (uint32_t) IOPORT_PIN_P103_PFC_00_ETH0_RXD2) },
   { .pin = BSP_IO_PORT_10_PIN_4, .pin_cfg = ((uint32_t) IOPORT_CFG_PORT_PERI
           | (uint32_t) IOPORT_PIN_P104_PFC_01_ETHSW_PHYLINK0) },
-  { .pin = BSP_IO_PORT_13_PIN_2, .pin_cfg = ((uint32_t) IOPORT_CFG_DRIVE_MID | (uint32_t) IOPORT_CFG_PORT_PERI
-          | (uint32_t) IOPORT_PIN_P132_PFC_0B_IIC_SCL0) },
-  { .pin = BSP_IO_PORT_13_PIN_3, .pin_cfg = ((uint32_t) IOPORT_CFG_DRIVE_MID | (uint32_t) IOPORT_CFG_PORT_PERI
-          | (uint32_t) IOPORT_PIN_P133_PFC_0B_IIC_SDA0) },
   { .pin = BSP_IO_PORT_13_PIN_4, .pin_cfg = ((uint32_t) IOPORT_CFG_PORT_DIRECTION_OUTPUT
           | (uint32_t) IOPORT_CFG_PORT_OUTPUT_LOW) },
   { .pin = BSP_IO_PORT_13_PIN_5, .pin_cfg = ((uint32_t) IOPORT_CFG_PORT_DIRECTION_INPUT) },

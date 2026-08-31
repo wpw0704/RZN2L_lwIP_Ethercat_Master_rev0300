@@ -113,10 +113,6 @@
       <configSetting altId="ether_ethsw.ethsw_phylink2.p00_5" configurationId="ether_ethsw.ethsw_phylink2" peripheral="ETHER_ETHSW"/>
       <configSetting altId="ether_gmac.gmac_mdc.p08_7" configurationId="ether_gmac.gmac_mdc" peripheral="ETHER_GMAC"/>
       <configSetting altId="ether_gmac.gmac_mdio.p09_0" configurationId="ether_gmac.gmac_mdio" peripheral="ETHER_GMAC"/>
-      <configSetting altId="iic0.iic_scl0.p13_2" configurationId="iic0.iic_scl0" peripheral="IIC0"/>
-      <configSetting altId="iic0.iic_sda0.p13_3" configurationId="iic0.iic_sda0" peripheral="IIC0"/>
-      <configSetting altId="iic1.iic_scl1.p05_2" configurationId="iic1.iic_scl1" peripheral="IIC1"/>
-      <configSetting altId="iic1.iic_sda1.p05_3" configurationId="iic1.iic_sda1" peripheral="IIC1"/>
       <configSetting altId="jtag_fslash_swd.tck_swclk.p02_7" configurationId="jtag_fslash_swd.tck_swclk" isUsedByDriver="true" peripheral="JTAG/SWD"/>
       <configSetting altId="jtag_fslash_swd.tdi.p02_5" configurationId="jtag_fslash_swd.tdi" isUsedByDriver="true" peripheral="JTAG/SWD"/>
       <configSetting altId="jtag_fslash_swd.tdo.p02_4" configurationId="jtag_fslash_swd.tdo" isUsedByDriver="true" peripheral="JTAG/SWD"/>
